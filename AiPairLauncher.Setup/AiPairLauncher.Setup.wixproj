@@ -1,0 +1,23 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Cultures>en-us</Cultures>
+    <DebugType>none</DebugType>
+    <PublishAppDir Condition="'$(PublishAppDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\win-x64\app</PublishAppDir>
+    <BundleRoot Condition="'$(BundleRoot)' == ''">$(MSBuildThisFileDirectory)..\artifacts\win-x64</BundleRoot>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.0</ProductVersion>
+    <OutputName>AiPairLauncher</OutputName>
+    <OutputPath>$(BundleRoot)\</OutputPath>
+    <DefineConstants>ProductVersion=$(ProductVersion)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <BindPath Include="$(PublishAppDir)" BindName="PublishApp" />
+    <BindPath Include="$(BundleRoot)" BindName="BundleRoot" />
+  </ItemGroup>
+</Project>
