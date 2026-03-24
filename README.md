@@ -256,6 +256,23 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\build-msi.ps1
 ```
 
+### GitHub Actions 自动发布
+
+仓库已经包含基于 tag 的自动发布工作流。推送符合 `vMAJOR.MINOR.PATCH` 格式的 tag 后，会自动：
+
+- 在 Windows runner 上执行 `scripts\publish.ps1`
+- 生成 `AiPairLauncher.msi`
+- 生成 `AiPairLauncher-win-x64.zip`
+- 创建或更新对应的 GitHub Release
+- 上传这两个附件到 Release
+
+示例：
+
+```powershell
+git tag v1.0.1
+git push origin v1.0.1
+```
+
 如果你的 `dotnet` 不在 `PATH` 中，也可以直接使用完整路径，例如：
 
 ```powershell

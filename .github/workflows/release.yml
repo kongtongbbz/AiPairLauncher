@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = "${env:GITHUB_REF_NAME}"
+          if ($tag -notmatch '^v(\d+)\.(\d+)\.(\d+)$') {
+              throw "Tag must match vMAJOR.MINOR.PATCH. Actual: $tag"
+          }
+
+          $version = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "release_name=AiPairLauncher $tag" >> $env:GITHUB_OUTPUT
+
+      - name: Build publish artifacts
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1 -ProductVersion "${{ steps.meta.outputs.version }}"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiPairLauncher-${{ steps.meta.outputs.tag }}
+          if-no-files-found: error
+          path: |
+            artifacts/win-x64/AiPairLauncher.msi
+            artifacts/win-x64/AiPairLauncher-win-x64.zip
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ steps.meta.outputs.tag }}
+          RELEASE_NAME: ${{ steps.meta.outputs.release_name }}
+        run: |
+          function New-GitHubHeaders {
+              return @{
+                  Authorization = "Bearer $env:GITHUB_TOKEN"
+                  Accept = "application/vnd.github+json"
+                  "X-GitHub-Api-Version" = "2022-11-28"
+                  "User-Agent" = "AiPairLauncher-Release-Workflow"
+              }
+          }
+
+          function Get-GitHubRelease {
+              param([Parameter(Mandatory = $true)][string]$Repository,
+                    [Parameter(Mandatory = $true)][string]$TagName)
+
+              $uri = "https://api.github.com/repos/$Repository/releases/tags/$TagName"
+              try {
+                  return Invoke-RestMethod -Method Get -Uri $uri -Headers (New-GitHubHeaders)
+              }
+              catch {
+                  if ($_.Exception.Response.StatusCode.value__ -eq 404) {
+                      return $null
+                  }
+
+                  throw
+              }
+          }
+
+          function New-GitHubRelease {
+              param([Parameter(Mandatory = $true)][string]$Repository,
+                    [Parameter(Mandatory = $true)][string]$TagName,
+                    [Parameter(Mandatory = $true)][string]$ReleaseName)
+
+              $body = @{
+                  tag_name = $TagName
+                  target_commitish = "main"
+                  name = $ReleaseName
+                  draft = $false
+                  prerelease = $false
+                  generate_release_notes = $true
+              } | ConvertTo-Json -Depth 5
+
+              $uri = "https://api.github.com/repos/$Repository/releases"
+              return Invoke-RestMethod -Method Post -Uri $uri -Headers (New-GitHubHeaders) -Body $body -ContentType "application/json; charset=utf-8"
+          }
+
+          function Remove-ExistingAsset {
+              param([Parameter(Mandatory = $true)]$Release,
+                    [Parameter(Mandatory = $true)][string]$AssetName)
+
+              $asset = $Release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
+              if ($null -eq $asset) {
+                  return
+              }
+
+              $uri = "https://api.github.com/repos/$env:REPOSITORY/releases/assets/$($asset.id)"
+              Invoke-RestMethod -Method Delete -Uri $uri -Headers (New-GitHubHeaders) | Out-Null
+          }
+
+          function Publish-ReleaseAsset {
+              param([Parameter(Mandatory = $true)]$Release,
+                    [Parameter(Mandatory = $true)][string]$Path,
+                    [Parameter(Mandatory = $true)][string]$ContentType)
+
+              $fileName = Split-Path -Leaf $Path
+              Remove-ExistingAsset -Release $Release -AssetName $fileName
+
+              $uploadUrl = ($Release.upload_url -replace '\{\?name,label\}', '') + '?name=' + [uri]::EscapeDataString($fileName)
+              $headers = New-GitHubHeaders
+              $headers["Content-Type"] = $ContentType
+
+              Invoke-WebRequest -Method Post -Uri $uploadUrl -Headers $headers -InFile $Path | Out-Null
+          }
+
+          $release = Get-GitHubRelease -Repository $env:REPOSITORY -TagName $env:TAG_NAME
+          if ($null -eq $release) {
+              $release = New-GitHubRelease -Repository $env:REPOSITORY -TagName $env:TAG_NAME -ReleaseName $env:RELEASE_NAME
+          }
+
+          Publish-ReleaseAsset -Release $release -Path (Resolve-Path ".\artifacts\win-x64\AiPairLauncher.msi") -ContentType "application/x-msi"
+          Publish-ReleaseAsset -Release $release -Path (Resolve-Path ".\artifacts\win-x64\AiPairLauncher-win-x64.zip") -ContentType "application/zip"
