@@ -52,6 +52,7 @@ $bundleRoot = Split-Path -Parent $OutputDir
 $installDir = Join-Path $bundleRoot "install"
 $readyMarker = Join-Path $bundleRoot ".publish-ready"
 $msiPath = Join-Path $bundleRoot "AiPairLauncher.msi"
+$zipPath = Join-Path $bundleRoot "AiPairLauncher-win-x64.zip"
 $buildMsiScript = Join-Path $repoRoot "scripts\build-msi.ps1"
 
 if (Test-Path -LiteralPath $readyMarker) {
@@ -68,6 +69,10 @@ if (Test-Path -LiteralPath $installDir) {
 
 if (Test-Path -LiteralPath $msiPath) {
     Remove-Item -LiteralPath $msiPath -Force
+}
+
+if (Test-Path -LiteralPath $zipPath) {
+    Remove-Item -LiteralPath $zipPath -Force
 }
 
 & $DotnetPath publish $ProjectPath `
@@ -100,6 +105,22 @@ if ($LASTEXITCODE -ne 0) {
     throw "MSI build script failed with exit code $LASTEXITCODE."
 }
 
+Compress-Archive `
+    -Path @(
+        (Join-Path $bundleRoot "app"),
+        (Join-Path $bundleRoot "install"),
+        (Join-Path $bundleRoot "README.md"),
+        (Join-Path $bundleRoot "LICENSE"),
+        $msiPath
+    ) `
+    -DestinationPath $zipPath `
+    -CompressionLevel Optimal `
+    -Force
+
+if (-not (Test-Path -LiteralPath $zipPath)) {
+    throw "ZIP package not found after compress: $zipPath"
+}
+
 Set-Content -LiteralPath $readyMarker -Value "ready" -Encoding ASCII
 
 Write-Output @"
@@ -107,5 +128,6 @@ BundleRoot     : $bundleRoot
 PublishedApp   : $OutputDir
 ProductVersion : $ProductVersion
 MsiPath        : $msiPath
+ZipPath        : $zipPath
 Status         : publish-complete
 "@
