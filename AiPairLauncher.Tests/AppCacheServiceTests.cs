@@ -18,20 +18,24 @@ public sealed class AppCacheServiceTests : IDisposable
     public async Task ClearAppCacheRemovesSessionAndPromptFilesAsync()
     {
         var sessionFilePath = Path.Combine(_rootPath, "session.json");
+        var stateDatabasePath = Path.Combine(_rootPath, "state.db");
         var promptDirectory = Path.Combine(_rootPath, "automation-prompts");
         Directory.CreateDirectory(promptDirectory);
         await File.WriteAllTextAsync(sessionFilePath, "{}");
+        await File.WriteAllTextAsync(stateDatabasePath, "db");
         await File.WriteAllTextAsync(Path.Combine(promptDirectory, "claude-1.txt"), "abc");
         await File.WriteAllTextAsync(Path.Combine(promptDirectory, "codex-1.txt"), "xyz");
 
-        var service = new AppCacheService(sessionFilePath, promptDirectory);
+        var service = new AppCacheService(sessionFilePath, stateDatabasePath, promptDirectory);
 
         var result = await service.ClearAsync();
 
-        Assert.True(result.SessionFileDeleted);
+        Assert.True(result.LegacySessionFileDeleted);
+        Assert.True(result.StateDatabaseDeleted);
         Assert.Equal(2, result.DeletedPromptFileCount);
         Assert.True(result.PromptDirectoryDeleted);
         Assert.False(File.Exists(sessionFilePath));
+        Assert.False(File.Exists(stateDatabasePath));
         Assert.False(Directory.Exists(promptDirectory));
     }
 
@@ -39,12 +43,14 @@ public sealed class AppCacheServiceTests : IDisposable
     public async Task ClearAppCacheIsIdempotentWhenCacheMissingAsync()
     {
         var sessionFilePath = Path.Combine(_rootPath, "session.json");
+        var stateDatabasePath = Path.Combine(_rootPath, "state.db");
         var promptDirectory = Path.Combine(_rootPath, "automation-prompts");
-        var service = new AppCacheService(sessionFilePath, promptDirectory);
+        var service = new AppCacheService(sessionFilePath, stateDatabasePath, promptDirectory);
 
         var result = await service.ClearAsync();
 
-        Assert.False(result.SessionFileDeleted);
+        Assert.False(result.LegacySessionFileDeleted);
+        Assert.False(result.StateDatabaseDeleted);
         Assert.Equal(0, result.DeletedPromptFileCount);
         Assert.False(result.PromptDirectoryDeleted);
     }

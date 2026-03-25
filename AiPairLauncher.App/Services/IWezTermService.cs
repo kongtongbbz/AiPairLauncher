@@ -6,7 +6,15 @@ public interface IWezTermService
 {
     Task<LauncherSession> StartAiPairAsync(LaunchRequest request, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<ManagedWorkspaceInfo>> ListManagedWorkspacesAsync(CancellationToken cancellationToken = default);
+
+    Task<SessionReconnectResult> TryReconnectSessionAsync(ManagedSessionRecord sessionRecord, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<PaneInfo>> GetWorkspacePanesAsync(LauncherSession session, string workspace, CancellationToken cancellationToken = default);
+
+    Task FocusPaneAsync(LauncherSession session, int paneId, CancellationToken cancellationToken = default);
+
+    Task<WorktreeLaunchContext> CreateWorktreeLaunchContextAsync(LaunchRequest request, CancellationToken cancellationToken = default);
 
     Task<string> ReadPaneTextAsync(LauncherSession session, int paneId, int lastLines, CancellationToken cancellationToken = default);
 

@@ -5,19 +5,22 @@ namespace AiPairLauncher.App.Services;
 
 public sealed class AppCacheService : IAppCacheService
 {
-    private readonly string _sessionFilePath;
+    private readonly string _legacySessionFilePath;
+    private readonly string _stateDatabasePath;
     private readonly string _automationPromptDirectory;
 
     public AppCacheService(ISessionStore sessionStore)
         : this(
-            sessionStore?.SessionFilePath ?? throw new ArgumentNullException(nameof(sessionStore)),
+            sessionStore?.LegacySessionFilePath ?? throw new ArgumentNullException(nameof(sessionStore)),
+            sessionStore.DatabasePath,
             Path.Combine(Path.GetTempPath(), "AiPairLauncher", "automation-prompts"))
     {
     }
 
-    public AppCacheService(string sessionFilePath, string automationPromptDirectory)
+    public AppCacheService(string legacySessionFilePath, string stateDatabasePath, string automationPromptDirectory)
     {
-        _sessionFilePath = sessionFilePath ?? throw new ArgumentNullException(nameof(sessionFilePath));
+        _legacySessionFilePath = legacySessionFilePath ?? throw new ArgumentNullException(nameof(legacySessionFilePath));
+        _stateDatabasePath = stateDatabasePath ?? throw new ArgumentNullException(nameof(stateDatabasePath));
         _automationPromptDirectory = automationPromptDirectory ?? throw new ArgumentNullException(nameof(automationPromptDirectory));
     }
 
@@ -25,11 +28,18 @@ public sealed class AppCacheService : IAppCacheService
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var sessionDeleted = false;
-        if (File.Exists(_sessionFilePath))
+        var legacySessionDeleted = false;
+        if (File.Exists(_legacySessionFilePath))
         {
-            File.Delete(_sessionFilePath);
-            sessionDeleted = true;
+            File.Delete(_legacySessionFilePath);
+            legacySessionDeleted = true;
+        }
+
+        var stateDatabaseDeleted = false;
+        if (File.Exists(_stateDatabasePath))
+        {
+            File.Delete(_stateDatabasePath);
+            stateDatabaseDeleted = true;
         }
 
         var deletedPromptFiles = 0;
@@ -47,9 +57,11 @@ public sealed class AppCacheService : IAppCacheService
 
         return Task.FromResult(new AppCacheCleanupResult
         {
-            SessionFilePath = _sessionFilePath,
+            LegacySessionFilePath = _legacySessionFilePath,
+            StateDatabasePath = _stateDatabasePath,
             AutomationPromptDirectory = _automationPromptDirectory,
-            SessionFileDeleted = sessionDeleted,
+            LegacySessionFileDeleted = legacySessionDeleted,
+            StateDatabaseDeleted = stateDatabaseDeleted,
             DeletedPromptFileCount = deletedPromptFiles,
             PromptDirectoryDeleted = promptDirectoryDeleted,
         });

@@ -9,8 +9,21 @@ internal sealed class FakeWezTermService : IWezTermService
 
     public List<(int PaneId, string Text, bool Submit)> SentMessages { get; } = [];
     public List<(AgentRole Role, string Prompt, bool Submit)> SentAutomationPrompts { get; } = [];
+    public List<int> FocusedPaneIds { get; } = [];
 
     public Exception? ReadException { get; set; }
+
+    public Exception? PaneException { get; set; }
+
+    public IReadOnlyList<PaneInfo>? PaneOverride { get; set; }
+
+    public IReadOnlyList<ManagedWorkspaceInfo> ManagedWorkspaces { get; set; } = [];
+
+    public SessionReconnectResult? ReconnectResultOverride { get; set; }
+
+    public WorktreeLaunchContext? WorktreeLaunchContextOverride { get; set; }
+
+    public LaunchRequest? LastLaunchRequest { get; private set; }
 
     public void SetPaneText(int paneId, string text)
     {
@@ -19,11 +32,55 @@ internal sealed class FakeWezTermService : IWezTermService
 
     public Task<LauncherSession> StartAiPairAsync(LaunchRequest request, CancellationToken cancellationToken = default)
     {
-        throw new NotSupportedException();
+        LastLaunchRequest = request;
+        return Task.FromResult(new LauncherSession
+        {
+            Workspace = request.Workspace ?? "generated-workspace",
+            WorkingDirectory = request.ResolvedWorkingDirectory ?? request.WorkingDirectory,
+            WezTermPath = "wezterm.exe",
+            SocketPath = "sock",
+            GuiPid = 999,
+            LeftPaneId = 11,
+            RightPaneId = 12,
+            RightPanePercent = request.RightPanePercent,
+            AutomationObserverEnabled = request.AutomationObserverEnabled,
+            ClaudePermissionMode = request.ClaudePermissionMode,
+            CodexMode = request.CodexMode,
+            AutomationEnabledAtLaunch = request.AutomationEnabled,
+        });
+    }
+
+    public Task<IReadOnlyList<ManagedWorkspaceInfo>> ListManagedWorkspacesAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(ManagedWorkspaces);
+    }
+
+    public Task<SessionReconnectResult> TryReconnectSessionAsync(ManagedSessionRecord sessionRecord, CancellationToken cancellationToken = default)
+    {
+        if (ReconnectResultOverride is not null)
+        {
+            return Task.FromResult(ReconnectResultOverride);
+        }
+
+        return Task.FromResult(new SessionReconnectResult
+        {
+            Success = false,
+            FailureReason = "not configured",
+        });
     }
 
     public Task<IReadOnlyList<PaneInfo>> GetWorkspacePanesAsync(LauncherSession session, string workspace, CancellationToken cancellationToken = default)
     {
+        if (PaneException is not null)
+        {
+            throw PaneException;
+        }
+
+        if (PaneOverride is not null)
+        {
+            return Task.FromResult(PaneOverride);
+        }
+
         IReadOnlyList<PaneInfo> panes =
         [
             new PaneInfo { PaneId = session.LeftPaneId, Workspace = workspace, LeftCol = 0, Cols = 100, Rows = 40 },
@@ -31,6 +88,28 @@ internal sealed class FakeWezTermService : IWezTermService
         ];
 
         return Task.FromResult(panes);
+    }
+
+    public Task FocusPaneAsync(LauncherSession session, int paneId, CancellationToken cancellationToken = default)
+    {
+        FocusedPaneIds.Add(paneId);
+        return Task.CompletedTask;
+    }
+
+    public Task<WorktreeLaunchContext> CreateWorktreeLaunchContextAsync(LaunchRequest request, CancellationToken cancellationToken = default)
+    {
+        if (WorktreeLaunchContextOverride is not null)
+        {
+            return Task.FromResult(WorktreeLaunchContextOverride);
+        }
+
+        return Task.FromResult(new WorktreeLaunchContext
+        {
+            WorkingDirectory = request.WorkingDirectory,
+            UsedWorktree = false,
+            WorktreeStrategy = request.WorktreeStrategy,
+            Summary = "未启用 worktree，继续使用原目录启动。",
+        });
     }
 
     public Task<string> ReadPaneTextAsync(LauncherSession session, int paneId, int lastLines, CancellationToken cancellationToken = default)

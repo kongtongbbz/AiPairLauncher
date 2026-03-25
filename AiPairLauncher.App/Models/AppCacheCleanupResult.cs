@@ -2,11 +2,15 @@ namespace AiPairLauncher.App.Models;
 
 public sealed class AppCacheCleanupResult
 {
-    public string SessionFilePath { get; init; } = string.Empty;
+    public string LegacySessionFilePath { get; init; } = string.Empty;
+
+    public string StateDatabasePath { get; init; } = string.Empty;
 
     public string AutomationPromptDirectory { get; init; } = string.Empty;
 
-    public bool SessionFileDeleted { get; init; }
+    public bool LegacySessionFileDeleted { get; init; }
+
+    public bool StateDatabaseDeleted { get; init; }
 
     public int DeletedPromptFileCount { get; init; }
 
@@ -16,7 +20,9 @@ public sealed class AppCacheCleanupResult
     {
         get
         {
-            var sessionText = SessionFileDeleted ? "已清理最近会话记录" : "最近会话记录本来就是空的";
+            var sessionText = LegacySessionFileDeleted || StateDatabaseDeleted
+                ? "已清理会话状态缓存"
+                : "会话缓存本来就是空的";
             var promptText = DeletedPromptFileCount > 0
                 ? $"已清理 {DeletedPromptFileCount} 个自动提示临时文件"
                 : "自动提示临时文件本来就是空的";

@@ -33,6 +33,7 @@ public sealed class WezTermService : IWezTermService
         ValidateLaunchRequest(request);
         var wezTermPath = ResolveWezTermPath();
         var workspace = BuildWorkspaceName(request.Workspace);
+        var launchDirectory = ResolveLaunchDirectory(request);
         var leftPaneCommand = BuildLeftPaneShellCommand(request);
         var rightPaneCommand = BuildRightPaneShellCommand(request);
         var existingGuiPids = Process.GetProcessesByName("wezterm-gui").Select(p => p.Id).ToHashSet();
@@ -41,7 +42,7 @@ public sealed class WezTermService : IWezTermService
             new ProcessCommand
             {
                 FileName = wezTermPath,
-                Arguments = BuildStartArguments(workspace, request, leftPaneCommand),
+                Arguments = BuildStartArguments(workspace, launchDirectory, leftPaneCommand),
                 Timeout = TimeSpan.FromSeconds(request.StartupTimeoutSeconds),
                 WaitForExit = false,
             },
@@ -53,7 +54,7 @@ public sealed class WezTermService : IWezTermService
 
         var firstPane = await WaitForFirstPaneAsync(wezTermPath, socketPath, workspace, request.StartupTimeoutSeconds, cancellationToken).ConfigureAwait(false);
         var leftPaneId = firstPane.PaneId;
-        var rightPaneId = await SplitRightPaneAsync(wezTermPath, socketPath, leftPaneId, request, rightPaneCommand, cancellationToken).ConfigureAwait(false);
+        var rightPaneId = await SplitRightPaneAsync(wezTermPath, socketPath, leftPaneId, request, launchDirectory, rightPaneCommand, cancellationToken).ConfigureAwait(false);
         await WaitForPaneCountAsync(wezTermPath, socketPath, workspace, 2, request.StartupTimeoutSeconds, cancellationToken).ConfigureAwait(false);
 
         int? claudeObserverPaneId = null;
@@ -64,7 +65,7 @@ public sealed class WezTermService : IWezTermService
                 wezTermPath,
                 socketPath,
                 leftPaneId,
-                request.WorkingDirectory,
+                launchDirectory,
                 BuildObserverShellCommand(wezTermPath, socketPath, leftPaneId, "Claude"),
                 request.StartupTimeoutSeconds,
                 cancellationToken).ConfigureAwait(false);
@@ -73,7 +74,7 @@ public sealed class WezTermService : IWezTermService
                 wezTermPath,
                 socketPath,
                 rightPaneId,
-                request.WorkingDirectory,
+                launchDirectory,
                 BuildObserverShellCommand(wezTermPath, socketPath, rightPaneId, "Codex"),
                 request.StartupTimeoutSeconds,
                 cancellationToken).ConfigureAwait(false);
@@ -84,7 +85,7 @@ public sealed class WezTermService : IWezTermService
         return new LauncherSession
         {
             Workspace = workspace,
-            WorkingDirectory = request.WorkingDirectory,
+            WorkingDirectory = launchDirectory,
             WezTermPath = wezTermPath,
             SocketPath = socketPath,
             GuiPid = guiPid,
@@ -101,11 +102,225 @@ public sealed class WezTermService : IWezTermService
         };
     }
 
+    public async Task<IReadOnlyList<ManagedWorkspaceInfo>> ListManagedWorkspacesAsync(CancellationToken cancellationToken = default)
+    {
+        var wezTermPath = ResolveWezTermPath();
+        var socketDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".local",
+            "share",
+            "wezterm");
+
+        if (!Directory.Exists(socketDirectory))
+        {
+            return [];
+        }
+
+        var workspaceList = new List<ManagedWorkspaceInfo>();
+        foreach (var socketPath in Directory.EnumerateFiles(socketDirectory, "gui-sock-*", SearchOption.TopDirectoryOnly))
+        {
+            IReadOnlyList<PaneInfo> panes;
+            try
+            {
+                panes = await ListPanesBySocketAsync(wezTermPath, socketPath, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var group in panes
+                         .Where(static pane => !string.IsNullOrWhiteSpace(pane.Workspace))
+                         .GroupBy(static pane => pane.Workspace, StringComparer.Ordinal))
+            {
+                workspaceList.Add(new ManagedWorkspaceInfo
+                {
+                    Workspace = group.Key,
+                    SocketPath = socketPath,
+                    GuiPid = ExtractGuiPid(socketPath),
+                    Panes = group
+                        .OrderBy(static pane => pane.LeftCol)
+                        .ThenByDescending(static pane => pane.Rows)
+                        .ThenBy(static pane => pane.PaneId)
+                        .ToArray(),
+                });
+            }
+        }
+
+        return workspaceList
+            .OrderBy(static item => item.Workspace, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public async Task<SessionReconnectResult> TryReconnectSessionAsync(ManagedSessionRecord sessionRecord, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionRecord);
+
+        var managedWorkspaces = await ListManagedWorkspacesAsync(cancellationToken).ConfigureAwait(false);
+        var matchedWorkspace = managedWorkspaces.FirstOrDefault(item =>
+            string.Equals(item.Workspace, sessionRecord.Session.Workspace, StringComparison.Ordinal));
+        if (matchedWorkspace is null)
+        {
+            return new SessionReconnectResult
+            {
+                Success = false,
+                FailureReason = "未找到匹配的 WezTerm 工作区。",
+            };
+        }
+
+        var mainPanes = SelectMainPanes(matchedWorkspace.Panes);
+        if (mainPanes.Count < 2)
+        {
+            return new SessionReconnectResult
+            {
+                Success = false,
+                FailureReason = "匹配到工作区，但 pane 拓扑不完整。",
+            };
+        }
+
+        var leftPane = mainPanes[0];
+        var rightPane = mainPanes[1];
+        var session = new LauncherSession
+        {
+            SessionId = sessionRecord.SessionId,
+            Workspace = sessionRecord.Session.Workspace,
+            WorkingDirectory = leftPane.CurrentDirectory ?? sessionRecord.Session.WorkingDirectory,
+            WezTermPath = sessionRecord.Session.WezTermPath,
+            SocketPath = matchedWorkspace.SocketPath,
+            GuiPid = matchedWorkspace.GuiPid,
+            LeftPaneId = leftPane.PaneId,
+            RightPaneId = rightPane.PaneId,
+            RightPanePercent = sessionRecord.Session.RightPanePercent,
+            ClaudeObserverPaneId = SelectObserverPane(matchedWorkspace.Panes, leftPane.LeftCol, leftPane.PaneId),
+            CodexObserverPaneId = SelectObserverPane(matchedWorkspace.Panes, rightPane.LeftCol, rightPane.PaneId),
+            AutomationObserverEnabled = sessionRecord.Session.AutomationObserverEnabled,
+            ClaudePermissionMode = sessionRecord.Session.ClaudePermissionMode,
+            CodexMode = sessionRecord.Session.CodexMode,
+            AutomationEnabledAtLaunch = sessionRecord.Session.AutomationEnabledAtLaunch,
+            CreatedAt = sessionRecord.Session.CreatedAt,
+        };
+
+        return new SessionReconnectResult
+        {
+            Success = true,
+            Session = session,
+            RuntimeBinding = new SessionRuntimeBinding
+            {
+                SessionId = sessionRecord.SessionId,
+                GuiPid = matchedWorkspace.GuiPid,
+                SocketPath = matchedWorkspace.SocketPath,
+                LeftPaneId = leftPane.PaneId,
+                RightPaneId = rightPane.PaneId,
+                ClaudeObserverPaneId = session.ClaudeObserverPaneId,
+                CodexObserverPaneId = session.CodexObserverPaneId,
+                IsAlive = true,
+                UpdatedAt = DateTimeOffset.Now,
+            },
+        };
+    }
+
     public async Task<IReadOnlyList<PaneInfo>> GetWorkspacePanesAsync(LauncherSession session, string workspace, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrWhiteSpace(workspace);
         return await ListPanesAsync(session.WezTermPath, session.SocketPath, workspace, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task FocusPaneAsync(LauncherSession session, int paneId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        await ActivatePaneAsync(session.WezTermPath, session.SocketPath, paneId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<WorktreeLaunchContext> CreateWorktreeLaunchContextAsync(LaunchRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (!request.UseWorktree || !string.Equals(request.WorktreeStrategy, "subdirectory", StringComparison.OrdinalIgnoreCase))
+        {
+            return new WorktreeLaunchContext
+            {
+                WorkingDirectory = request.WorkingDirectory,
+                UsedWorktree = false,
+                WorktreeStrategy = "none",
+                Summary = "未启用 worktree，继续使用原目录启动。",
+            };
+        }
+
+        var gitPath = ResolveGitPath();
+        if (gitPath is null)
+        {
+            return new WorktreeLaunchContext
+            {
+                WorkingDirectory = request.WorkingDirectory,
+                UsedWorktree = false,
+                WorktreeStrategy = request.WorktreeStrategy,
+                Summary = "未找到 git，已回退到原目录启动。",
+            };
+        }
+
+        var gitRoot = await TryResolveGitRootAsync(gitPath, request.WorkingDirectory, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(gitRoot))
+        {
+            return new WorktreeLaunchContext
+            {
+                WorkingDirectory = request.WorkingDirectory,
+                UsedWorktree = false,
+                WorktreeStrategy = request.WorktreeStrategy,
+                Summary = "当前目录不在 Git 仓库中，已回退到原目录启动。",
+            };
+        }
+
+        var branchName = BuildWorktreeBranchName(request);
+        var worktreeRoot = Path.Combine(gitRoot, ".worktrees");
+        Directory.CreateDirectory(worktreeRoot);
+        var worktreeDirectory = Path.Combine(worktreeRoot, branchName);
+
+        if (Directory.Exists(worktreeDirectory))
+        {
+            branchName = $"{branchName}-{DateTime.Now:yyyyMMddHHmmss}";
+            worktreeDirectory = Path.Combine(worktreeRoot, branchName);
+        }
+
+        var result = await _processRunner.RunAsync(
+            new ProcessCommand
+            {
+                FileName = gitPath,
+                Arguments =
+                [
+                    "worktree",
+                    "add",
+                    "-b",
+                    branchName,
+                    worktreeDirectory
+                ],
+                WorkingDirectory = gitRoot,
+                Timeout = TimeSpan.FromSeconds(Math.Max(20, request.StartupTimeoutSeconds)),
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        if (!result.IsSuccess || !Directory.Exists(worktreeDirectory))
+        {
+            return new WorktreeLaunchContext
+            {
+                WorkingDirectory = request.WorkingDirectory,
+                UsedWorktree = false,
+                WorktreeStrategy = request.WorktreeStrategy,
+                BranchName = branchName,
+                Summary = string.IsNullOrWhiteSpace(result.StandardError)
+                    ? "创建 worktree 失败，已回退到原目录启动。"
+                    : $"创建 worktree 失败，已回退到原目录启动：{result.StandardError}",
+            };
+        }
+
+        return new WorktreeLaunchContext
+        {
+            WorkingDirectory = worktreeDirectory,
+            UsedWorktree = true,
+            WorktreeStrategy = request.WorktreeStrategy,
+            BranchName = branchName,
+            Summary = $"已创建 worktree：{branchName}",
+        };
     }
 
     public async Task<string> ReadPaneTextAsync(LauncherSession session, int paneId, int lastLines, CancellationToken cancellationToken = default)
@@ -314,6 +529,7 @@ public sealed class WezTermService : IWezTermService
         string socketPath,
         int leftPaneId,
         LaunchRequest request,
+        string workingDirectory,
         string rightPaneCommand,
         CancellationToken cancellationToken)
     {
@@ -326,7 +542,7 @@ public sealed class WezTermService : IWezTermService
                 "--pane-id", leftPaneId.ToString(),
                 "--right",
                 "--percent", request.RightPanePercent.ToString(),
-                "--cwd", request.WorkingDirectory,
+                "--cwd", workingDirectory,
                 "--",
                 "powershell.exe",
                 "-NoLogo",
@@ -559,46 +775,8 @@ public sealed class WezTermService : IWezTermService
 
     private static IReadOnlyList<PaneInfo> ParsePanes(string json, string workspace)
     {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return [];
-        }
-
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.ValueKind != JsonValueKind.Array)
-        {
-            return [];
-        }
-
-        var panes = new List<PaneInfo>();
-        foreach (var item in doc.RootElement.EnumerateArray())
-        {
-            if (!item.TryGetProperty("workspace", out var workspaceProp))
-            {
-                continue;
-            }
-
-            var paneWorkspace = workspaceProp.GetString();
-            if (!string.Equals(paneWorkspace, workspace, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            var size = item.TryGetProperty("size", out var sizeProp) ? sizeProp : default;
-            panes.Add(new PaneInfo
-            {
-                PaneId = item.GetProperty("pane_id").GetInt32(),
-                Workspace = paneWorkspace ?? string.Empty,
-                Title = item.TryGetProperty("title", out var titleProp) ? titleProp.GetString() : null,
-                CurrentDirectory = item.TryGetProperty("cwd", out var cwdProp) ? cwdProp.GetString() : null,
-                IsActive = item.TryGetProperty("is_active", out var activeProp) && activeProp.GetBoolean(),
-                LeftCol = item.TryGetProperty("left_col", out var leftColProp) ? leftColProp.GetInt32() : 0,
-                Rows = size.ValueKind == JsonValueKind.Object && size.TryGetProperty("rows", out var rowsProp) ? rowsProp.GetInt32() : 0,
-                Cols = size.ValueKind == JsonValueKind.Object && size.TryGetProperty("cols", out var colsProp) ? colsProp.GetInt32() : 0,
-            });
-        }
-
-        return panes
+        return ParsePanes(json)
+            .Where(pane => string.Equals(pane.Workspace, workspace, StringComparison.Ordinal))
             .OrderBy(p => p.LeftCol)
             .ThenBy(p => p.PaneId)
             .ToArray();
@@ -616,7 +794,7 @@ public sealed class WezTermService : IWezTermService
             string.Empty);
     }
 
-    private List<string> BuildStartArguments(string workspace, LaunchRequest request, string startCommand)
+    private List<string> BuildStartArguments(string workspace, string workingDirectory, string startCommand)
     {
         var args = BuildGlobalArguments();
         args.AddRange(
@@ -626,7 +804,7 @@ public sealed class WezTermService : IWezTermService
             "--workspace",
             workspace,
             "--cwd",
-            request.WorkingDirectory,
+            workingDirectory,
             "--",
             "powershell.exe",
             "-NoLogo",
@@ -841,8 +1019,178 @@ public sealed class WezTermService : IWezTermService
         return resolvedPath ?? throw new FileNotFoundException("未找到 codex 可执行文件。");
     }
 
+    private string? ResolveGitPath()
+    {
+        return _commandLocator.Resolve("git");
+    }
+
+    private static string ResolveLaunchDirectory(LaunchRequest request)
+    {
+        return string.IsNullOrWhiteSpace(request.ResolvedWorkingDirectory)
+            ? request.WorkingDirectory
+            : request.ResolvedWorkingDirectory;
+    }
+
+    private async Task<IReadOnlyList<PaneInfo>> ListPanesBySocketAsync(
+        string wezTermPath,
+        string socketPath,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunWezTermCliAsync(
+            wezTermPath,
+            socketPath,
+            new[]
+            {
+                "list",
+                "--format",
+                "json",
+            },
+            null,
+            TimeSpan.FromSeconds(10),
+            cancellationToken).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+        {
+            throw new InvalidOperationException($"读取 pane 列表失败: {result.StandardError}");
+        }
+
+        return ParsePanes(result.StandardOutput);
+    }
+
+    private async Task<string?> TryResolveGitRootAsync(string gitPath, string workingDirectory, CancellationToken cancellationToken)
+    {
+        var result = await _processRunner.RunAsync(
+            new ProcessCommand
+            {
+                FileName = gitPath,
+                Arguments =
+                [
+                    "rev-parse",
+                    "--show-toplevel"
+                ],
+                WorkingDirectory = workingDirectory,
+                Timeout = TimeSpan.FromSeconds(10),
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        if (!result.IsSuccess || string.IsNullOrWhiteSpace(result.StandardOutput))
+        {
+            return null;
+        }
+
+        return result.StandardOutput.Trim();
+    }
+
+    private static string BuildWorktreeBranchName(LaunchRequest request)
+    {
+        var seed = string.IsNullOrWhiteSpace(request.WorktreeBranchName)
+            ? request.Workspace
+            : request.WorktreeBranchName;
+        var normalized = Slugify(seed);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            normalized = DateTime.Now.ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return normalized;
+    }
+
+    private static string Slugify(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var chars = value
+            .Trim()
+            .ToLowerInvariant()
+            .Select(static ch => char.IsLetterOrDigit(ch) ? ch : '-')
+            .ToArray();
+
+        var normalized = new string(chars).Trim('-');
+        while (normalized.Contains("--", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return normalized;
+    }
+
+    private static int ExtractGuiPid(string socketPath)
+    {
+        var fileName = Path.GetFileName(socketPath);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return 0;
+        }
+
+        var parts = fileName.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length > 0 && int.TryParse(parts[^1], out var guiPid) ? guiPid : 0;
+    }
+
+    private static IReadOnlyList<PaneInfo> SelectMainPanes(IReadOnlyList<PaneInfo> panes)
+    {
+        return panes
+            .GroupBy(static pane => pane.LeftCol)
+            .OrderBy(static group => group.Key)
+            .Select(static group => group
+                .OrderByDescending(static pane => pane.Rows)
+                .ThenBy(static pane => pane.PaneId)
+                .First())
+            .Take(2)
+            .ToArray();
+    }
+
+    private static int? SelectObserverPane(IReadOnlyList<PaneInfo> panes, int leftCol, int mainPaneId)
+    {
+        return panes
+            .Where(pane => pane.LeftCol == leftCol && pane.PaneId != mainPaneId)
+            .OrderBy(static pane => pane.Rows)
+            .Select(static pane => (int?)pane.PaneId)
+            .FirstOrDefault();
+    }
+
     private static string QuoteForPowerShell(string value)
     {
         return $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
+    }
+
+    private static IReadOnlyList<PaneInfo> ParsePanes(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var panes = new List<PaneInfo>();
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            if (!item.TryGetProperty("workspace", out var workspaceProp))
+            {
+                continue;
+            }
+
+            var size = item.TryGetProperty("size", out var sizeProp) ? sizeProp : default;
+            panes.Add(new PaneInfo
+            {
+                PaneId = item.GetProperty("pane_id").GetInt32(),
+                Workspace = workspaceProp.GetString() ?? string.Empty,
+                Title = item.TryGetProperty("title", out var titleProp) ? titleProp.GetString() : null,
+                CurrentDirectory = item.TryGetProperty("cwd", out var cwdProp) ? cwdProp.GetString() : null,
+                IsActive = item.TryGetProperty("is_active", out var activeProp) && activeProp.GetBoolean(),
+                LeftCol = item.TryGetProperty("left_col", out var leftColProp) ? leftColProp.GetInt32() : 0,
+                Rows = size.ValueKind == JsonValueKind.Object && size.TryGetProperty("rows", out var rowsProp) ? rowsProp.GetInt32() : 0,
+                Cols = size.ValueKind == JsonValueKind.Object && size.TryGetProperty("cols", out var colsProp) ? colsProp.GetInt32() : 0,
+            });
+        }
+
+        return panes;
     }
 }
