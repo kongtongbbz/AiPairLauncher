@@ -296,8 +296,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-msi.ps1
 示例：
 
 ```powershell
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
 如果你的 `dotnet` 不在 `PATH` 中，也可以直接使用完整路径，例如：
