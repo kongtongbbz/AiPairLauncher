@@ -21,7 +21,7 @@ function Get-ProjectVersion {
     $projectXml = [xml](Get-Content -LiteralPath $CsprojPath -Raw)
     $versionNode = $projectXml.Project.PropertyGroup.Version | Select-Object -First 1
     if ($null -eq $versionNode -or [string]::IsNullOrWhiteSpace($versionNode.InnerText)) {
-        return "1.0.2"
+        return "1.1.0"
     }
 
     return $versionNode.InnerText.Trim()
