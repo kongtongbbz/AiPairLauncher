@@ -10,7 +10,9 @@ public partial class MainWindow : Window
 {
     private readonly IDependencyService _dependencyService;
     private readonly ISessionStore _sessionStore;
+    private readonly IAppCacheService _appCacheService;
     private readonly IWezTermService? _wezTermService;
+    private readonly IAutoCollaborationCoordinator? _autoCollaborationCoordinator;
     private readonly MainWindowViewModel _viewModel;
     private bool _hasInitialized;
     private LauncherSession? _currentSession;
@@ -18,16 +20,25 @@ public partial class MainWindow : Window
     public MainWindow(
         IDependencyService dependencyService,
         ISessionStore sessionStore,
-        IWezTermService? wezTermService = null)
+        IAppCacheService appCacheService,
+        IWezTermService? wezTermService = null,
+        IAutoCollaborationCoordinator? autoCollaborationCoordinator = null)
     {
         _dependencyService = dependencyService ?? throw new ArgumentNullException(nameof(dependencyService));
         _sessionStore = sessionStore ?? throw new ArgumentNullException(nameof(sessionStore));
+        _appCacheService = appCacheService ?? throw new ArgumentNullException(nameof(appCacheService));
         _wezTermService = wezTermService;
+        _autoCollaborationCoordinator = autoCollaborationCoordinator;
         _viewModel = new MainWindowViewModel();
 
         InitializeComponent();
         DataContext = _viewModel;
         Loaded += MainWindow_Loaded;
+
+        if (_autoCollaborationCoordinator is not null)
+        {
+            _autoCollaborationCoordinator.StateChanged += AutoCollaborationCoordinator_StateChanged;
+        }
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -38,9 +49,10 @@ public partial class MainWindow : Window
         }
 
         _hasInitialized = true;
+        _viewModel.ResetAutomationState();
         await RefreshDependenciesAsync();
         await RestoreLastSessionAsync();
-        _viewModel.AppendLog("UI 壳层已就绪，可执行启动和上下文转发。");
+        _viewModel.AppendLog("UI 壳层已就绪，可执行启动、审批和自动编排。");
     }
 
     private async void RefreshDependencies_Click(object sender, RoutedEventArgs e)
@@ -54,6 +66,7 @@ public partial class MainWindow : Window
         {
             EnsureWezTermService();
             EnsureWorkingDirectory();
+            await StopAutomationIfRunningAsync().ConfigureAwait(true);
 
             var request = new LaunchRequest
             {
@@ -61,6 +74,8 @@ public partial class MainWindow : Window
                 WorkingDirectory = _viewModel.WorkingDirectory.Trim(),
                 ClaudePermissionMode = _viewModel.ClaudePermissionMode,
                 CodexMode = _viewModel.CodexMode,
+                AutomationEnabled = _viewModel.AutoModeEnabled,
+                AutomationObserverEnabled = _viewModel.AutomationObserverEnabled,
                 RightPanePercent = _viewModel.RightPanePercent,
                 StartupTimeoutSeconds = 20,
             };
@@ -73,6 +88,59 @@ public partial class MainWindow : Window
             _viewModel.ApplySession(_currentSession);
             _viewModel.AppendLog($"会话启动成功，工作区: {_currentSession.Workspace}，Claude 模式: {_viewModel.ClaudeModeDisplayText}，Codex 模式: {_viewModel.CodexModeDisplayText}。");
             _viewModel.FooterMessage = $"最近操作: 已启动工作区 {_currentSession.Workspace}";
+
+            if (_viewModel.AutoModeEnabled)
+            {
+                await StartAutomationCoreAsync(true).ConfigureAwait(true);
+            }
+        });
+    }
+
+    private async void StartAutomation_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("启动自动模式", async () =>
+        {
+            await StartAutomationCoreAsync(false).ConfigureAwait(true);
+        });
+    }
+
+    private async void StopAutomation_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("停止自动模式", async () =>
+        {
+            await StopAutomationIfRunningAsync().ConfigureAwait(true);
+        });
+    }
+
+    private async void ApprovePlan_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("批准计划", async () =>
+        {
+            EnsureAutomationCoordinator();
+            var note = string.IsNullOrWhiteSpace(_viewModel.ApprovalNote) ? null : _viewModel.ApprovalNote.Trim();
+            await _autoCollaborationCoordinator!
+                .ApproveAsync(note)
+                .ConfigureAwait(true);
+
+            _viewModel.AppendLog("已批准待执行计划，并发送给 Codex。");
+            _viewModel.FooterMessage = "最近操作: 已批准计划并发送给 Codex";
+            _viewModel.ApprovalNote = string.Empty;
+        });
+    }
+
+    private async void RejectPlan_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("退回计划", async () =>
+        {
+            EnsureAutomationCoordinator();
+            var note = string.IsNullOrWhiteSpace(_viewModel.ApprovalNote) ? null : _viewModel.ApprovalNote.Trim();
+            await _autoCollaborationCoordinator!
+                .RejectAsync(note)
+                .ConfigureAwait(true);
+
+            _viewModel.AppendLog("已退回待执行计划，要求 Claude 重拟。");
+            _viewModel.FooterMessage = "最近操作: 已退回计划给 Claude";
+            _viewModel.ApprovalNote = string.Empty;
         });
     }
 
@@ -89,6 +157,37 @@ public partial class MainWindow : Window
     private async void ReloadLastSession_Click(object sender, RoutedEventArgs e)
     {
         await RestoreLastSessionAsync();
+    }
+
+    private async void ClearAppCache_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("清理程序缓存", async () =>
+        {
+            var choice = MessageBox.Show(
+                "将清理 AiPairLauncher 生成的最近会话记录和自动提示临时文件。\n不会删除安装文件、项目代码或已打开的终端窗口。\n\n是否继续？",
+                "清理程序缓存",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (choice != MessageBoxResult.Yes)
+            {
+                _viewModel.AppendLog("已取消清理程序缓存。");
+                _viewModel.FooterMessage = "最近操作: 已取消清理程序缓存";
+                return;
+            }
+
+            await StopAutomationIfRunningAsync().ConfigureAwait(true);
+
+            var cleanupResult = await _appCacheService
+                .ClearAsync()
+                .ConfigureAwait(true);
+
+            _currentSession = null;
+            _viewModel.ApplySession(null);
+            _viewModel.ResetAutomationState();
+            _viewModel.AppendLog($"程序缓存清理完成: {cleanupResult.Summary}");
+            _viewModel.FooterMessage = "最近操作: 已清理程序缓存";
+        });
     }
 
     private void ClearLog_Click(object sender, RoutedEventArgs e)
@@ -143,14 +242,20 @@ public partial class MainWindow : Window
         await ExecuteActionAsync("加载会话", async () =>
         {
             _currentSession = await _sessionStore.LoadAsync().ConfigureAwait(true);
-            _viewModel.ApplySession(_currentSession);
 
             if (_currentSession is null)
             {
+                _viewModel.ApplySession(null);
                 _viewModel.AppendLog("未找到最近会话记录。");
                 return;
             }
 
+            if (!await TryEnsureSessionAliveAsync(_currentSession, "最近会话已失效，已清空本地记录，请重新点击“启动 Ai Pair”。").ConfigureAwait(true))
+            {
+                return;
+            }
+
+            _viewModel.ApplySession(_currentSession);
             _viewModel.AppendLog($"已恢复最近会话: {_currentSession.Workspace}");
             _viewModel.FooterMessage = $"最近会话: {_currentSession.Workspace} / pane {_currentSession.LeftPaneId}->{_currentSession.RightPaneId}";
         });
@@ -182,20 +287,102 @@ public partial class MainWindow : Window
         });
     }
 
-    private async Task EnsureSessionReadyAsync()
+    private async Task StartAutomationCoreAsync(bool autoStartedByLaunch)
     {
-        if (_currentSession is not null)
+        EnsureAutomationCoordinator();
+        await EnsureSessionReadyAsync().ConfigureAwait(true);
+
+        if (_currentSession is null)
+        {
+            throw new InvalidOperationException("没有可用会话，无法启动自动编排。");
+        }
+
+        if (!_currentSession.AutomationEnabledAtLaunch)
+        {
+            throw new InvalidOperationException("当前会话不是自动模式会话，请勾选“自动交互模式”后重新启动 Ai Pair。");
+        }
+
+        if (!autoStartedByLaunch &&
+            (!string.Equals(_currentSession.ClaudePermissionMode, "plan", StringComparison.OrdinalIgnoreCase) ||
+             !string.Equals(_currentSession.CodexMode, "full-auto", StringComparison.OrdinalIgnoreCase)))
+        {
+            _viewModel.AppendLog("提示: 当前自动模式会话的代理模式与推荐值不一致，程序仍会继续尝试编排。");
+        }
+
+        var settings = new AutomationSettings
+        {
+            IsEnabled = _viewModel.AutoModeEnabled,
+            InitialTaskPrompt = _viewModel.AutomationTaskPrompt.Trim(),
+            PollIntervalMilliseconds = _viewModel.AutomationPollIntervalMilliseconds,
+            CaptureLines = _viewModel.AutomationCaptureLines,
+            SubmitOnSend = _viewModel.AutomationSubmitOnSend,
+            NoProgressTimeoutSeconds = _viewModel.AutomationTimeoutSeconds,
+        };
+
+        await _autoCollaborationCoordinator!
+            .StartAsync(_currentSession, settings)
+            .ConfigureAwait(true);
+
+        _viewModel.AppendLog("自动编排已启动，等待 Claude 输出第一阶段计划。");
+        _viewModel.FooterMessage = "自动编排已启动";
+    }
+
+    private async Task StopAutomationIfRunningAsync()
+    {
+        if (_autoCollaborationCoordinator is null)
         {
             return;
         }
 
+        var state = _autoCollaborationCoordinator.GetCurrentState();
+        if (state.Status is AutomationStageStatus.Idle
+            or AutomationStageStatus.Stopped
+            or AutomationStageStatus.Completed
+            or AutomationStageStatus.PausedOnError)
+        {
+            return;
+        }
+
+        await _autoCollaborationCoordinator.StopAsync().ConfigureAwait(true);
+        _viewModel.AppendLog("已停止当前自动编排。");
+        _viewModel.FooterMessage = "自动编排已停止";
+    }
+
+    private async void AutoCollaborationCoordinator_StateChanged(object? sender, AutomationRunState state)
+    {
+        await Dispatcher.InvokeAsync(() =>
+        {
+            _viewModel.ApplyAutomationState(state);
+            _viewModel.AppendLog($"自动编排状态: {state.Status} / {state.StatusDetail}");
+            if (!string.IsNullOrWhiteSpace(state.LastError))
+            {
+                _viewModel.AppendLog($"自动编排错误: {state.LastError}");
+            }
+
+            _viewModel.FooterMessage = state.LastError is null
+                ? $"自动编排: {state.StatusDetail}"
+                : $"自动编排暂停: {state.LastError}";
+        });
+    }
+
+    private async Task EnsureSessionReadyAsync()
+    {
+        if (_currentSession is not null)
+        {
+            await EnsureLiveSessionOrThrowAsync(_currentSession).ConfigureAwait(true);
+            return;
+        }
+
         _currentSession = await _sessionStore.LoadAsync().ConfigureAwait(true);
-        _viewModel.ApplySession(_currentSession);
 
         if (_currentSession is null)
         {
+            _viewModel.ApplySession(null);
             throw new InvalidOperationException("当前没有可用会话，请先点击“启动 Ai Pair”。");
         }
+
+        await EnsureLiveSessionOrThrowAsync(_currentSession).ConfigureAwait(true);
+        _viewModel.ApplySession(_currentSession);
     }
 
     private void EnsureWorkingDirectory()
@@ -219,6 +406,50 @@ public partial class MainWindow : Window
         }
 
         throw new InvalidOperationException("当前未注入 IWezTermService，无法执行终端操作。");
+    }
+
+    private void EnsureAutomationCoordinator()
+    {
+        if (_autoCollaborationCoordinator is not null)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException("当前未注入 IAutoCollaborationCoordinator，无法执行自动编排。");
+    }
+
+    private async Task EnsureLiveSessionOrThrowAsync(LauncherSession session)
+    {
+        var message = "最近会话对应的 WezTerm 已失效，请重新点击“启动 Ai Pair”创建新会话。";
+        if (await TryEnsureSessionAliveAsync(session, message).ConfigureAwait(true))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(message);
+    }
+
+    private async Task<bool> TryEnsureSessionAliveAsync(LauncherSession session, string userMessage)
+    {
+        try
+        {
+            EnsureWezTermService();
+            var panes = await _wezTermService!
+                .GetWorkspacePanesAsync(session, session.Workspace)
+                .ConfigureAwait(true);
+
+            LauncherSessionValidator.EnsurePaneTopology(session, panes);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _currentSession = null;
+            await _sessionStore.ClearAsync().ConfigureAwait(true);
+            _viewModel.ApplySession(null);
+            _viewModel.AppendLog($"{userMessage} 详细原因: {ex.Message}");
+            _viewModel.FooterMessage = userMessage;
+            return false;
+        }
     }
 
     private async Task ExecuteActionAsync(string actionName, Func<Task> action)

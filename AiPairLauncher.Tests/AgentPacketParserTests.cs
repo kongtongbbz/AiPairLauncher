@@ -1,0 +1,204 @@
+using AiPairLauncher.App.Models;
+using AiPairLauncher.App.Services;
+using Xunit;
+
+namespace AiPairLauncher.Tests;
+
+public sealed class AgentPacketParserTests
+{
+    private readonly AgentPacketParser _parser = new();
+
+    [Fact(DisplayName = "test_parse_stage_plan_valid_packet")]
+    public void ParseStagePlanValidPacket()
+    {
+        var outcome = _parser.ParseLatest(AutomationTestHelpers.BuildStagePlanPacket(1, "首阶段", "执行首阶段"));
+
+        Assert.Equal(PacketParseStatus.Success, outcome.Status);
+        Assert.NotNull(outcome.Packet);
+        Assert.Equal(AgentRole.Claude, outcome.Packet!.Role);
+        Assert.Equal(PacketKind.StagePlan, outcome.Packet.Kind);
+        Assert.Equal(1, outcome.Packet.StageId);
+        Assert.Equal("首阶段", outcome.Packet.Title);
+        Assert.Equal("执行首阶段", outcome.Packet.CodexBrief);
+    }
+
+    [Fact(DisplayName = "test_parse_execution_report_valid_packet")]
+    public void ParseExecutionReportValidPacket()
+    {
+        var outcome = _parser.ParseLatest(AutomationTestHelpers.BuildExecutionReportPacket(2, "阶段 2 已完成"));
+
+        Assert.Equal(PacketParseStatus.Success, outcome.Status);
+        Assert.NotNull(outcome.Packet);
+        Assert.Equal(AgentRole.Codex, outcome.Packet!.Role);
+        Assert.Equal(PacketKind.ExecutionReport, outcome.Packet.Kind);
+        Assert.Equal("success", outcome.Packet.Status);
+        Assert.Contains("完成编码", outcome.Packet.CompletedItems);
+    }
+
+    [Fact(DisplayName = "test_ignore_incomplete_packet")]
+    public void IgnoreIncompletePacket()
+    {
+        var incomplete = """
+[AIPAIR_PACKET]
+role: claude
+kind: stage_plan
+stage_id: 1
+title: 未完成
+""";
+
+        var outcome = _parser.ParseLatest(incomplete);
+
+        Assert.Equal(PacketParseStatus.NoPacket, outcome.Status);
+        Assert.Null(outcome.Packet);
+    }
+
+    [Fact(DisplayName = "test_extract_latest_packet_requires_standalone_markers")]
+    public void ExtractLatestPacketRequiresStandaloneMarkers()
+    {
+        var mixedText = """
+PS D:\repo> echo [AIPAIR_PACKET]
+txt' -Force -ErrorAction SilentlyContinue }
+[AIPAIR_PACKET]
+role: claude
+kind: stage_plan
+stage_id: 1
+title: 合法计划
+summary: <<<SUMMARY
+摘要
+SUMMARY
+scope: <<<SCOPE
+范围
+SCOPE
+steps: <<<STEPS
+1. 第一步
+STEPS
+acceptance: <<<ACCEPTANCE
+1. 验收项
+ACCEPTANCE
+codex_brief: <<<CODEX_BRIEF
+执行摘要
+CODEX_BRIEF
+[/AIPAIR_PACKET]
+PS D:\repo>
+""";
+
+        var outcome = _parser.ParseLatest(mixedText);
+
+        Assert.Equal(PacketParseStatus.Success, outcome.Status);
+        Assert.NotNull(outcome.Packet);
+        Assert.Equal(1, outcome.Packet!.StageId);
+        Assert.Equal("合法计划", outcome.Packet.Title);
+    }
+
+    [Fact(DisplayName = "test_ignore_preview_template_markers")]
+    public void IgnorePreviewTemplateMarkers()
+    {
+        var mixedText = """
+[AiPair] Prompt -> Claude
+
+[AIPAIR_PACKET_TEMPLATE]
+role: claude
+kind: stage_plan
+stage_id: 1
+title: 预览模板
+summary: <<<SUMMARY
+这是一段发给 Claude 的预览内容
+SUMMARY
+[/AIPAIR_PACKET_TEMPLATE]
+
+[AIPAIR_PACKET]
+role: claude
+kind: stage_plan
+stage_id: 2
+title: 真正计划
+summary: <<<SUMMARY
+真实阶段摘要
+SUMMARY
+scope: <<<SCOPE
+真实执行范围
+SCOPE
+steps: <<<STEPS
+1. 第一步
+STEPS
+acceptance: <<<ACCEPTANCE
+1. 验收项
+ACCEPTANCE
+codex_brief: <<<CODEX_BRIEF
+执行摘要
+CODEX_BRIEF
+[/AIPAIR_PACKET]
+""";
+
+        var outcome = _parser.ParseLatest(mixedText);
+
+        Assert.Equal(PacketParseStatus.Success, outcome.Status);
+        Assert.NotNull(outcome.Packet);
+        Assert.Equal(2, outcome.Packet!.StageId);
+        Assert.Equal("真正计划", outcome.Packet.Title);
+    }
+
+    [Fact(DisplayName = "test_semantic_fingerprint_ignores_line_wraps")]
+    public void SemanticFingerprintIgnoresLineWraps()
+    {
+        var packetA = """
+[AIPAIR_PACKET]
+role: claude
+kind: stage_plan
+stage_id: 1
+title: 指纹测试
+summary: <<<SUMMARY
+创建 validation.txt 文件
+SUMMARY
+scope: <<<SCOPE
+仅修改 validation.txt
+SCOPE
+steps: <<<STEPS
+1. 创建 validation.txt
+2. 写入 aipair-e2e-ok
+STEPS
+acceptance: <<<ACCEPTANCE
+1. 文件存在
+2. 内容正确
+ACCEPTANCE
+codex_brief: <<<CODEX_BRIEF
+创建 validation.txt 并写入 aipair-e2e-ok
+CODEX_BRIEF
+[/AIPAIR_PACKET]
+""";
+
+        var packetB = """
+[AIPAIR_PACKET]
+role: claude
+kind: stage_plan
+stage_id: 1
+title: 指纹测试
+summary: <<<SUMMARY
+创建 validation.txt
+文件
+SUMMARY
+scope: <<<SCOPE
+仅修改 validation.txt
+SCOPE
+steps: <<<STEPS
+1. 创建 validation.txt
+2. 写入 aipair-e2e-ok
+STEPS
+acceptance: <<<ACCEPTANCE
+1. 文件存在
+2. 内容正确
+ACCEPTANCE
+codex_brief: <<<CODEX_BRIEF
+创建 validation.txt
+并写入 aipair-e2e-ok
+CODEX_BRIEF
+[/AIPAIR_PACKET]
+""";
+
+        var outcomeA = _parser.ParseLatest(packetA);
+        var outcomeB = _parser.ParseLatest(packetB);
+
+        Assert.Equal(PacketParseStatus.Success, outcomeA.Status);
+        Assert.Equal(PacketParseStatus.Success, outcomeB.Status);
+        Assert.Equal(outcomeA.Packet!.Fingerprint, outcomeB.Packet!.Fingerprint);
+    }
+}

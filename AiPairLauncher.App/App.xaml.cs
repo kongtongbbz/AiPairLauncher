@@ -20,9 +20,12 @@ public partial class App : Application
 
             IDependencyService dependencyService = new DependencyService(commandLocator, processRunner);
             ISessionStore sessionStore = new SessionStore();
+            IAppCacheService appCacheService = new AppCacheService(sessionStore);
             IWezTermService wezTermService = new WezTermService(commandLocator, processRunner, wezTermConfigPath);
+            IAgentPacketParser packetParser = new AgentPacketParser();
+            IAutoCollaborationCoordinator autoCollaborationCoordinator = new AutoCollaborationCoordinator(wezTermService, packetParser);
 
-            var window = new MainWindow(dependencyService, sessionStore, wezTermService);
+            var window = new MainWindow(dependencyService, sessionStore, appCacheService, wezTermService, autoCollaborationCoordinator);
             MainWindow = window;
             window.Show();
         }

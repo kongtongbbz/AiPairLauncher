@@ -18,6 +18,17 @@ public sealed class LauncherSession
 
     public required int RightPanePercent { get; init; }
 
+    public int? ClaudeObserverPaneId { get; init; }
+
+    public int? CodexObserverPaneId { get; init; }
+
+    public bool AutomationObserverEnabled { get; init; }
+
+    public string ClaudePermissionMode { get; init; } = "default";
+
+    public string CodexMode { get; init; } = "standard";
+
+    public bool AutomationEnabledAtLaunch { get; init; }
+
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.Now;
 }
-

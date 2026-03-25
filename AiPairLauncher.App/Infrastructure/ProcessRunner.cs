@@ -71,6 +71,7 @@ public sealed class ProcessRunner : IProcessRunner
 
         if (command.WaitForExit)
         {
+            startInfo.StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
             startInfo.StandardOutputEncoding = Encoding.UTF8;
             startInfo.StandardErrorEncoding = Encoding.UTF8;
         }

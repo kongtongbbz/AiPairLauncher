@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Text;
 using AiPairLauncher.App.Infrastructure;
 using AiPairLauncher.App.Models;
 
@@ -8,6 +9,14 @@ namespace AiPairLauncher.App.Services;
 
 public sealed class WezTermService : IWezTermService
 {
+    private const int ObserverPanePercent = 50;
+    private const int ObserverCaptureLines = 220;
+    private const int ObserverRefreshMilliseconds = 1200;
+    private const string PacketMarker = "[AIPAIR_PACKET]";
+    private const string PacketMarkerPreview = "[AIPAIR_PACKET_TEMPLATE]";
+    private const string PacketEndMarker = "[/AIPAIR_PACKET]";
+    private const string PacketEndMarkerPreview = "[/AIPAIR_PACKET_TEMPLATE]";
+
     private readonly CommandLocator _commandLocator;
     private readonly IProcessRunner _processRunner;
     private readonly string? _configFilePath;
@@ -24,15 +33,15 @@ public sealed class WezTermService : IWezTermService
         ValidateLaunchRequest(request);
         var wezTermPath = ResolveWezTermPath();
         var workspace = BuildWorkspaceName(request.Workspace);
-        var claudeCommand = BuildClaudeShellCommand(request);
-        var codexCommand = BuildCodexShellCommand(request);
+        var leftPaneCommand = BuildLeftPaneShellCommand(request);
+        var rightPaneCommand = BuildRightPaneShellCommand(request);
         var existingGuiPids = Process.GetProcessesByName("wezterm-gui").Select(p => p.Id).ToHashSet();
 
         var startResult = await _processRunner.RunAsync(
             new ProcessCommand
             {
                 FileName = wezTermPath,
-                Arguments = BuildStartArguments(workspace, request, claudeCommand),
+                Arguments = BuildStartArguments(workspace, request, leftPaneCommand),
                 Timeout = TimeSpan.FromSeconds(request.StartupTimeoutSeconds),
                 WaitForExit = false,
             },
@@ -43,8 +52,34 @@ public sealed class WezTermService : IWezTermService
         await WaitForSocketAsync(socketPath, request.StartupTimeoutSeconds, cancellationToken).ConfigureAwait(false);
 
         var firstPane = await WaitForFirstPaneAsync(wezTermPath, socketPath, workspace, request.StartupTimeoutSeconds, cancellationToken).ConfigureAwait(false);
-        var rightPaneId = await SplitRightPaneAsync(wezTermPath, socketPath, firstPane.PaneId, request, cancellationToken).ConfigureAwait(false);
-        var panes = await WaitForTwoPanesAsync(wezTermPath, socketPath, workspace, request.StartupTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+        var leftPaneId = firstPane.PaneId;
+        var rightPaneId = await SplitRightPaneAsync(wezTermPath, socketPath, leftPaneId, request, rightPaneCommand, cancellationToken).ConfigureAwait(false);
+        await WaitForPaneCountAsync(wezTermPath, socketPath, workspace, 2, request.StartupTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+
+        int? claudeObserverPaneId = null;
+        int? codexObserverPaneId = null;
+        if (request.AutomationEnabled && request.AutomationObserverEnabled)
+        {
+            claudeObserverPaneId = await SplitBottomObserverPaneAsync(
+                wezTermPath,
+                socketPath,
+                leftPaneId,
+                request.WorkingDirectory,
+                BuildObserverShellCommand(wezTermPath, socketPath, leftPaneId, "Claude"),
+                request.StartupTimeoutSeconds,
+                cancellationToken).ConfigureAwait(false);
+
+            codexObserverPaneId = await SplitBottomObserverPaneAsync(
+                wezTermPath,
+                socketPath,
+                rightPaneId,
+                request.WorkingDirectory,
+                BuildObserverShellCommand(wezTermPath, socketPath, rightPaneId, "Codex"),
+                request.StartupTimeoutSeconds,
+                cancellationToken).ConfigureAwait(false);
+
+            await WaitForPaneCountAsync(wezTermPath, socketPath, workspace, 4, request.StartupTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+        }
 
         return new LauncherSession
         {
@@ -53,9 +88,15 @@ public sealed class WezTermService : IWezTermService
             WezTermPath = wezTermPath,
             SocketPath = socketPath,
             GuiPid = guiPid,
-            LeftPaneId = panes[0].PaneId,
-            RightPaneId = panes.Count >= 2 ? panes[1].PaneId : rightPaneId,
+            LeftPaneId = leftPaneId,
+            RightPaneId = rightPaneId,
             RightPanePercent = request.RightPanePercent,
+            ClaudeObserverPaneId = claudeObserverPaneId,
+            CodexObserverPaneId = codexObserverPaneId,
+            AutomationObserverEnabled = request.AutomationEnabled && request.AutomationObserverEnabled,
+            ClaudePermissionMode = request.ClaudePermissionMode,
+            CodexMode = request.CodexMode,
+            AutomationEnabledAtLaunch = request.AutomationEnabled,
             CreatedAt = DateTimeOffset.Now,
         };
     }
@@ -65,6 +106,54 @@ public sealed class WezTermService : IWezTermService
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrWhiteSpace(workspace);
         return await ListPanesAsync(session.WezTermPath, session.SocketPath, workspace, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<string> ReadPaneTextAsync(LauncherSession session, int paneId, int lastLines, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return await GetPaneTextAsync(session.WezTermPath, session.SocketPath, paneId, lastLines, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task SendTextToPaneAsync(LauncherSession session, int paneId, string text, bool submit, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+
+        await SendPaneTextAsync(session.WezTermPath, session.SocketPath, paneId, text, false, cancellationToken).ConfigureAwait(false);
+        if (submit)
+        {
+            await ActivatePaneAsync(session.WezTermPath, session.SocketPath, paneId, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(120, cancellationToken).ConfigureAwait(false);
+            WindowInputHelper.SendEnterKeyToProcessWindow(session.GuiPid);
+        }
+    }
+
+    public async Task SendAutomationPromptAsync(
+        LauncherSession session,
+        AgentRole role,
+        string prompt,
+        bool submit,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+
+        if (!session.AutomationEnabledAtLaunch)
+        {
+            throw new InvalidOperationException("当前会话不是自动模式会话，无法使用自动编排命令分发。");
+        }
+
+        var promptPath = await WriteAutomationPromptToTempAsync(role, prompt, cancellationToken).ConfigureAwait(false);
+        var command = role switch
+        {
+            AgentRole.Claude => BuildClaudeAutomationCommand(session, promptPath),
+            AgentRole.Codex => BuildCodexAutomationCommand(session, promptPath),
+            _ => throw new InvalidOperationException($"不支持的自动编排角色: {role}"),
+        };
+
+        var paneId = role == AgentRole.Claude ? session.LeftPaneId : session.RightPaneId;
+        var payload = submit ? $"{command}{Environment.NewLine}" : command;
+        await SendPaneTextAsync(session.WezTermPath, session.SocketPath, paneId, payload, false, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ContextTransferResult> SendContextAsync(LauncherSession session, SendContextRequest request, CancellationToken cancellationToken = default)
@@ -79,31 +168,21 @@ public sealed class WezTermService : IWezTermService
             throw new InvalidOperationException($"工作区 {workspace} 没有足够的 pane。");
         }
 
-        var sourcePaneId = request.SourcePaneId;
-        var targetPaneId = request.TargetPaneId;
-        if (sourcePaneId is null || targetPaneId is null)
-        {
-            sourcePaneId = request.FromLeftToRight ? panes[0].PaneId : panes[1].PaneId;
-            targetPaneId = request.FromLeftToRight ? panes[1].PaneId : panes[0].PaneId;
-        }
+        var (sourcePaneId, targetPaneId) = SessionPaneRouter.ResolveTransferPaneIds(session, request);
 
-        var capturedText = await GetPaneTextAsync(session.WezTermPath, session.SocketPath, sourcePaneId.Value, request.LastLines, cancellationToken).ConfigureAwait(false);
+        var capturedText = await GetPaneTextAsync(session.WezTermPath, session.SocketPath, sourcePaneId, request.LastLines, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(capturedText))
         {
-            throw new InvalidOperationException($"pane {sourcePaneId.Value} 没有可发送内容。");
+            throw new InvalidOperationException($"pane {sourcePaneId} 没有可发送内容。");
         }
 
-        var payload = BuildPayload(request.Instruction, sourcePaneId.Value, capturedText);
-        await SendPaneTextAsync(session.WezTermPath, session.SocketPath, targetPaneId.Value, payload, false, cancellationToken).ConfigureAwait(false);
-        if (request.Submit)
-        {
-            await SendPaneTextAsync(session.WezTermPath, session.SocketPath, targetPaneId.Value, "\r", true, cancellationToken).ConfigureAwait(false);
-        }
+        var payload = BuildPayload(request.Instruction, sourcePaneId, capturedText);
+        await SendTextToPaneAsync(session, targetPaneId, payload, request.Submit, cancellationToken).ConfigureAwait(false);
 
         return new ContextTransferResult
         {
-            SourcePaneId = sourcePaneId.Value,
-            TargetPaneId = targetPaneId.Value,
+            SourcePaneId = sourcePaneId,
+            TargetPaneId = targetPaneId,
             LastLines = Math.Abs(request.LastLines),
             Submitted = request.Submit,
             CapturedLength = capturedText.Length,
@@ -235,6 +314,7 @@ public sealed class WezTermService : IWezTermService
         string socketPath,
         int leftPaneId,
         LaunchRequest request,
+        string rightPaneCommand,
         CancellationToken cancellationToken)
     {
         var result = await RunWezTermCliAsync(
@@ -252,7 +332,7 @@ public sealed class WezTermService : IWezTermService
                 "-NoLogo",
                 "-NoExit",
                 "-Command",
-                BuildCodexShellCommand(request),
+                rightPaneCommand,
             },
             null,
             TimeSpan.FromSeconds(request.StartupTimeoutSeconds),
@@ -271,10 +351,11 @@ public sealed class WezTermService : IWezTermService
         return paneId;
     }
 
-    private async Task<IReadOnlyList<PaneInfo>> WaitForTwoPanesAsync(
+    private async Task<IReadOnlyList<PaneInfo>> WaitForPaneCountAsync(
         string wezTermPath,
         string socketPath,
         string workspace,
+        int expectedPaneCount,
         int timeoutSeconds,
         CancellationToken cancellationToken)
     {
@@ -282,7 +363,7 @@ public sealed class WezTermService : IWezTermService
         while (DateTimeOffset.Now < deadline)
         {
             var panes = await ListPanesAsync(wezTermPath, socketPath, workspace, cancellationToken).ConfigureAwait(false);
-            if (panes.Count >= 2)
+            if (panes.Count >= expectedPaneCount)
             {
                 return panes;
             }
@@ -290,7 +371,50 @@ public sealed class WezTermService : IWezTermService
             await Task.Delay(250, cancellationToken).ConfigureAwait(false);
         }
 
-        throw new TimeoutException($"等待工作区 {workspace} 的双 pane 就绪超时。");
+        throw new TimeoutException($"等待工作区 {workspace} 的 {expectedPaneCount} 个 pane 就绪超时。");
+    }
+
+    private async Task<int> SplitBottomObserverPaneAsync(
+        string wezTermPath,
+        string socketPath,
+        int parentPaneId,
+        string workingDirectory,
+        string observerCommand,
+        int timeoutSeconds,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunWezTermCliAsync(
+            wezTermPath,
+            socketPath,
+            new[]
+            {
+                "split-pane",
+                "--pane-id", parentPaneId.ToString(),
+                "--bottom",
+                "--percent", ObserverPanePercent.ToString(),
+                "--cwd", workingDirectory,
+                "--",
+                "powershell.exe",
+                "-NoLogo",
+                "-NoExit",
+                "-Command",
+                observerCommand,
+            },
+            null,
+            TimeSpan.FromSeconds(timeoutSeconds),
+            cancellationToken).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+        {
+            throw new InvalidOperationException($"split-pane(observer) 执行失败: {result.StandardError}");
+        }
+
+        if (!int.TryParse(result.StandardOutput.Trim(), out var paneId))
+        {
+            throw new InvalidOperationException($"无法解析 observer pane id: {result.StandardOutput}");
+        }
+
+        return paneId;
     }
 
     private async Task<string> GetPaneTextAsync(
@@ -338,14 +462,13 @@ public sealed class WezTermService : IWezTermService
         if (noPaste)
         {
             args.Add("--no-paste");
-            args.Add(text);
         }
 
         var result = await RunWezTermCliAsync(
             wezTermPath,
             socketPath,
             args,
-            noPaste ? null : text,
+            text,
             TimeSpan.FromSeconds(10),
             cancellationToken).ConfigureAwait(false);
 
@@ -380,6 +503,30 @@ public sealed class WezTermService : IWezTermService
         }
 
         return ParsePanes(result.StandardOutput, workspace);
+    }
+
+    private async Task ActivatePaneAsync(
+        string wezTermPath,
+        string socketPath,
+        int paneId,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunWezTermCliAsync(
+            wezTermPath,
+            socketPath,
+            new[]
+            {
+                "activate-pane",
+                "--pane-id", paneId.ToString(),
+            },
+            null,
+            TimeSpan.FromSeconds(10),
+            cancellationToken).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+        {
+            throw new InvalidOperationException($"激活 pane 失败: {result.StandardError}");
+        }
     }
 
     private async Task<ProcessResult> RunWezTermCliAsync(
@@ -469,7 +616,7 @@ public sealed class WezTermService : IWezTermService
             string.Empty);
     }
 
-    private List<string> BuildStartArguments(string workspace, LaunchRequest request, string claudeCommand)
+    private List<string> BuildStartArguments(string workspace, LaunchRequest request, string startCommand)
     {
         var args = BuildGlobalArguments();
         args.AddRange(
@@ -485,7 +632,7 @@ public sealed class WezTermService : IWezTermService
             "-NoLogo",
             "-NoExit",
             "-Command",
-            claudeCommand,
+            startCommand,
         ]);
 
         return args;
@@ -509,7 +656,21 @@ public sealed class WezTermService : IWezTermService
         return args;
     }
 
-    private string BuildClaudeShellCommand(LaunchRequest request)
+    private string BuildLeftPaneShellCommand(LaunchRequest request)
+    {
+        return request.AutomationEnabled
+            ? BuildAutomationShellReadyCommand(AgentRole.Claude)
+            : BuildClaudeInteractiveShellCommand(request);
+    }
+
+    private string BuildRightPaneShellCommand(LaunchRequest request)
+    {
+        return request.AutomationEnabled
+            ? BuildAutomationShellReadyCommand(AgentRole.Codex)
+            : BuildCodexInteractiveShellCommand(request);
+    }
+
+    private string BuildClaudeInteractiveShellCommand(LaunchRequest request)
     {
         var claudePath = ResolveClaudePath();
         var parts = new List<string>
@@ -527,7 +688,7 @@ public sealed class WezTermService : IWezTermService
         return string.Join(' ', parts);
     }
 
-    private string BuildCodexShellCommand(LaunchRequest request)
+    private string BuildCodexInteractiveShellCommand(LaunchRequest request)
     {
         var codexPath = ResolveCodexPath();
         var parts = new List<string>
@@ -550,6 +711,109 @@ public sealed class WezTermService : IWezTermService
         }
 
         return string.Join(' ', parts);
+    }
+
+    private static string BuildAutomationShellReadyCommand(AgentRole role)
+    {
+        var roleName = role == AgentRole.Claude ? "Claude" : "Codex";
+        return $"Write-Host '[AiPair] {roleName} automation shell ready.'";
+    }
+
+    private string BuildObserverShellCommand(
+        string wezTermPath,
+        string socketPath,
+        int sourcePaneId,
+        string roleName)
+    {
+        return string.Join(
+            " ",
+            "$ErrorActionPreference='Continue';",
+            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;",
+            "$OutputEncoding=[System.Text.Encoding]::UTF8;",
+            $"$env:WEZTERM_UNIX_SOCKET={QuoteForPowerShell(socketPath)};",
+            $"$wezTermPath={QuoteForPowerShell(wezTermPath)};",
+            $"$sourcePaneId={sourcePaneId};",
+            $"$roleName={QuoteForPowerShell(roleName)};",
+            "while ($true) {",
+            "try {",
+            "Clear-Host;",
+            "Write-Host ('[AiPair] ' + $roleName + ' live view -> pane ' + $sourcePaneId + ' @ ' + (Get-Date -Format 'HH:mm:ss'));",
+            "Write-Host '';",
+            $"& $wezTermPath cli --no-auto-start get-text --pane-id $sourcePaneId --start-line -{ObserverCaptureLines};",
+            "}",
+            "catch {",
+            "Write-Host ('[AiPair] live view error: ' + $_.Exception.Message);",
+            "}",
+            $"Start-Sleep -Milliseconds {ObserverRefreshMilliseconds};",
+            "}");
+    }
+
+    private string BuildClaudeAutomationCommand(LauncherSession session, string promptPath)
+    {
+        var claudePath = ResolveClaudePath();
+        var permissionMode = string.Equals(session.ClaudePermissionMode, "plan", StringComparison.OrdinalIgnoreCase)
+            ? "plan"
+            : "default";
+        var promptPreviewPreamble = BuildPromptPreviewPreamble("Claude");
+
+        return string.Join(
+            " ",
+            "$ErrorActionPreference='Stop';",
+            "[Console]::InputEncoding=[System.Text.Encoding]::UTF8;",
+            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;",
+            "$OutputEncoding=[System.Text.Encoding]::UTF8;",
+            $"try {{ $promptText = Get-Content -Encoding UTF8 -Raw -LiteralPath {QuoteForPowerShell(promptPath)}; {promptPreviewPreamble} $promptText | & {QuoteForPowerShell(claudePath)} -p --permission-mode {permissionMode} --output-format text 2>&1 }}",
+            $"finally {{ Remove-Item -LiteralPath {QuoteForPowerShell(promptPath)} -Force -ErrorAction SilentlyContinue }}");
+    }
+
+    private string BuildCodexAutomationCommand(LauncherSession session, string promptPath)
+    {
+        var codexPath = ResolveCodexPath();
+        var modeArgs = BuildCodexExecModeArguments(session.CodexMode);
+        var promptPreviewPreamble = BuildPromptPreviewPreamble("Codex");
+        return string.Join(
+            " ",
+            "$ErrorActionPreference='Stop';",
+            "[Console]::InputEncoding=[System.Text.Encoding]::UTF8;",
+            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;",
+            "$OutputEncoding=[System.Text.Encoding]::UTF8;",
+            $"try {{ $promptText = Get-Content -Encoding UTF8 -Raw -LiteralPath {QuoteForPowerShell(promptPath)}; {promptPreviewPreamble} $promptText | & {QuoteForPowerShell(codexPath)} exec {modeArgs} --skip-git-repo-check --color never -C {QuoteForPowerShell(session.WorkingDirectory)} - 2>&1 }}",
+            $"finally {{ Remove-Item -LiteralPath {QuoteForPowerShell(promptPath)} -Force -ErrorAction SilentlyContinue }}");
+    }
+
+    private static string BuildPromptPreviewPreamble(string roleName)
+    {
+        return string.Join(
+            " ",
+            $"$promptPreview = $promptText.Replace({QuoteForPowerShell(PacketMarker)}, {QuoteForPowerShell(PacketMarkerPreview)}).Replace({QuoteForPowerShell(PacketEndMarker)}, {QuoteForPowerShell(PacketEndMarkerPreview)});",
+            $"Write-Host {QuoteForPowerShell($"[AiPair] Prompt -> {roleName}")};",
+            "Write-Host '';",
+            "Write-Host $promptPreview;",
+            "Write-Host '';");
+    }
+
+    private static string BuildCodexExecModeArguments(string codexMode)
+    {
+        return codexMode.Trim().ToLowerInvariant() switch
+        {
+            "never-ask" => "-a never -s workspace-write",
+            "full-auto" => "--full-auto",
+            _ => "-s workspace-write",
+        };
+    }
+
+    private static async Task<string> WriteAutomationPromptToTempAsync(
+        AgentRole role,
+        string prompt,
+        CancellationToken cancellationToken)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "AiPairLauncher", "automation-prompts");
+        Directory.CreateDirectory(directory);
+
+        var fileName = $"{role.ToString().ToLowerInvariant()}-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.txt";
+        var filePath = Path.Combine(directory, fileName);
+        await File.WriteAllTextAsync(filePath, prompt, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), cancellationToken).ConfigureAwait(false);
+        return filePath;
     }
 
     private string ResolveClaudePath()

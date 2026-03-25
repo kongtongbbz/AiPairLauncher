@@ -10,6 +10,10 @@ public sealed class LaunchRequest
 
     public string CodexMode { get; init; } = "standard";
 
+    public bool AutomationEnabled { get; init; }
+
+    public bool AutomationObserverEnabled { get; init; } = true;
+
     public int RightPanePercent { get; init; } = 60;
 
     public int StartupTimeoutSeconds { get; init; } = 20;
