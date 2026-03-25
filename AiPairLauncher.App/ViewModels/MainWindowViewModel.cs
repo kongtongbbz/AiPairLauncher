@@ -22,6 +22,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         new() { Value = "never-ask", Label = "Never Ask" },
     ];
 
+    private static readonly IReadOnlyList<ModeOption> AutomationAdvanceModes =
+    [
+        new() { Value = "manual-each-stage", Label = "逐轮审批" },
+        new() { Value = "manual-first-then-auto", Label = "首轮审批后自动" },
+        new() { Value = "full-auto-loop", Label = "全自动闭环" },
+    ];
+
     private readonly StringBuilder _logBuilder = new();
 
     private string _workingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -44,6 +51,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string _automationLastError = "暂无";
     private string _automationUpdatedAt = "暂无";
     private string _automationTaskPrompt = "请围绕当前工作目录中的项目需求推进开发，先拆成可审批的阶段计划，再驱动 Codex 执行与验证，直到完成。";
+    private string _automationAdvancePolicy = "full-auto-loop";
+    private string _automationAutoAdvanceStatusText = "未启用";
+    private string _automationInterventionReason = "暂无";
     private string _approvalNote = string.Empty;
     private string _pendingApprovalStage = "暂无";
     private string _pendingApprovalTitle = "暂无";
@@ -57,6 +67,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private int _automationPollIntervalMilliseconds = 1500;
     private int _automationCaptureLines = 220;
     private int _automationTimeoutSeconds = 600;
+    private int _automationMaxAutoStages = 8;
+    private int _automationMaxRetryPerStage = 2;
+    private int _automationAutoApprovedStageCount;
+    private int _automationCurrentStageRetryCount;
     private bool _submitAfterSend = true;
     private bool _automationSubmitOnSend = true;
     private bool _automationObserverEnabled = true;
@@ -167,6 +181,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         set => SetField(ref _automationTimeoutSeconds, Math.Max(30, value));
     }
 
+    public string SelectedAutomationAdvancePolicyKey
+    {
+        get => _automationAdvancePolicy;
+        set => SetField(ref _automationAdvancePolicy, NormalizeAutomationAdvancePolicy(value));
+    }
+
+    public int AutomationMaxAutoStages
+    {
+        get => _automationMaxAutoStages;
+        set => SetField(ref _automationMaxAutoStages, Math.Max(1, value));
+    }
+
+    public int AutomationMaxRetryPerStage
+    {
+        get => _automationMaxRetryPerStage;
+        set => SetField(ref _automationMaxRetryPerStage, Math.Max(0, value));
+    }
+
     public string TransferInstruction
     {
         get => _transferInstruction;
@@ -261,6 +293,30 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         get => _automationUpdatedAt;
         private set => SetField(ref _automationUpdatedAt, value);
+    }
+
+    public string AutomationAutoAdvanceStatusText
+    {
+        get => _automationAutoAdvanceStatusText;
+        private set => SetField(ref _automationAutoAdvanceStatusText, value);
+    }
+
+    public int AutomationAutoApprovedStageCount
+    {
+        get => _automationAutoApprovedStageCount;
+        private set => SetField(ref _automationAutoApprovedStageCount, value);
+    }
+
+    public int AutomationCurrentStageRetryCount
+    {
+        get => _automationCurrentStageRetryCount;
+        private set => SetField(ref _automationCurrentStageRetryCount, value);
+    }
+
+    public string AutomationInterventionReason
+    {
+        get => _automationInterventionReason;
+        private set => SetField(ref _automationInterventionReason, value);
     }
 
     public string ApprovalNote
@@ -400,6 +456,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public IReadOnlyList<ModeOption> CodexModeOptions => CodexModes;
 
+    public IReadOnlyList<ModeOption> AutomationAdvancePolicyOptions => AutomationAdvanceModes;
+
+    public AiPairLauncher.App.Models.AutomationAdvancePolicy SelectedAutomationAdvancePolicy => ParseAutomationAdvancePolicy(_automationAdvancePolicy);
+
     public string ClaudeModeDisplayText => ClaudePermissionMode switch
     {
         "plan" => "Plan Mode",
@@ -414,7 +474,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     };
 
     public string ModeLockHint => AutoModeEnabled
-        ? "自动模式已锁定为 Claude=Plan Mode / Codex=Full Auto"
+        ? "自动模式已锁定为 Claude=Plan Mode / Codex=Full Auto，推进策略与保护阈值在右侧配置"
         : "关闭自动模式后可自由选择 Claude / Codex 启动参数";
 
     public void ReplaceDependencies(IEnumerable<DependencyStatus> dependencies)
@@ -452,6 +512,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         AutomationLastPacketSummary = string.IsNullOrWhiteSpace(state.LastPacketSummary) ? "暂无" : state.LastPacketSummary;
         AutomationLastError = string.IsNullOrWhiteSpace(state.LastError) ? "暂无" : state.LastError;
         AutomationUpdatedAt = state.UpdatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+        AutomationAutoAdvanceStatusText = state.AutoAdvanceEnabled ? "已启用" : "未启用";
+        AutomationAutoApprovedStageCount = state.AutoApprovedStageCount;
+        AutomationCurrentStageRetryCount = state.CurrentStageRetryCount;
+        AutomationInterventionReason = DisplayOrPlaceholder(state.InterventionReason);
         IsAutomationActive = state.IsActive;
 
         if (state.PendingApproval is null)
@@ -585,6 +649,26 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             "full-auto" => "full-auto",
             "never-ask" => "never-ask",
             _ => "standard",
+        };
+    }
+
+    private static string NormalizeAutomationAdvancePolicy(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "manual-each-stage" => "manual-each-stage",
+            "manual-first-then-auto" => "manual-first-then-auto",
+            _ => "full-auto-loop",
+        };
+    }
+
+    private static AiPairLauncher.App.Models.AutomationAdvancePolicy ParseAutomationAdvancePolicy(string value)
+    {
+        return NormalizeAutomationAdvancePolicy(value) switch
+        {
+            "manual-each-stage" => AiPairLauncher.App.Models.AutomationAdvancePolicy.ManualEachStage,
+            "manual-first-then-auto" => AiPairLauncher.App.Models.AutomationAdvancePolicy.ManualFirstStageThenAuto,
+            _ => AiPairLauncher.App.Models.AutomationAdvancePolicy.FullAutoLoop,
         };
     }
 }

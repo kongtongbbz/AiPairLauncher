@@ -349,7 +349,7 @@ public sealed class AgentPacketParser : IAgentPacketParser
 
     private static int ParseStageId(string value)
     {
-        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var stageId) && stageId >= 0)
+        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var stageId) && stageId > 0)
         {
             return stageId;
         }

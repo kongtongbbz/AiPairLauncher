@@ -14,6 +14,14 @@ public sealed class AutomationRunState
 
     public string? LastError { get; init; }
 
+    public bool AutoAdvanceEnabled { get; init; }
+
+    public int AutoApprovedStageCount { get; init; }
+
+    public int CurrentStageRetryCount { get; init; }
+
+    public string? InterventionReason { get; init; }
+
     public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.Now;
 
     public bool HasPendingApproval => PendingApproval is not null;

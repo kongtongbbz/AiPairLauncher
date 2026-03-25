@@ -369,6 +369,10 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
 
                                     <TextBlock Grid.Row="0" Grid.Column="0" Foreground="{DynamicResource TextSecondaryBrush}" Text="状态" />
@@ -382,6 +386,18 @@
 
                                     <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="最近更新" />
                                     <TextBlock Grid.Row="3" Grid.Column="1" Margin="0,8,0,0" Text="{Binding AutomationUpdatedAt}" />
+
+                                    <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="自动推进" />
+                                    <TextBlock Grid.Row="4" Grid.Column="1" Margin="0,8,0,0" Text="{Binding AutomationAutoAdvanceStatusText}" />
+
+                                    <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="自动轮次" />
+                                    <TextBlock Grid.Row="5" Grid.Column="1" Margin="0,8,0,0" Text="{Binding AutomationAutoApprovedStageCount}" />
+
+                                    <TextBlock Grid.Row="6" Grid.Column="0" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="当前重试" />
+                                    <TextBlock Grid.Row="6" Grid.Column="1" Margin="0,8,0,0" Text="{Binding AutomationCurrentStageRetryCount}" />
+
+                                    <TextBlock Grid.Row="7" Grid.Column="0" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="人工接管" />
+                                    <TextBlock Grid.Row="7" Grid.Column="1" Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding AutomationInterventionReason}" />
                                 </Grid>
 
                                 <Border Padding="10"
@@ -399,41 +415,69 @@
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
-                                        <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="轮询间隔(ms)" />
-                                        <TextBox Grid.Row="0"
+                                        <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="推进策略" />
+                                        <ComboBox Grid.Row="0"
+                                                  Grid.Column="1"
+                                                  Width="180"
+                                                  SelectedValuePath="Value"
+                                                  DisplayMemberPath="Label"
+                                                  ItemsSource="{Binding AutomationAdvancePolicyOptions}"
+                                                  SelectedValue="{Binding SelectedAutomationAdvancePolicyKey, UpdateSourceTrigger=PropertyChanged}" />
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,8,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="最大自动阶段" />
+                                        <TextBox Grid.Row="1"
                                                  Grid.Column="1"
+                                                 Margin="0,8,0,0"
+                                                 Width="120"
+                                                 VerticalContentAlignment="Center"
+                                                 Text="{Binding AutomationMaxAutoStages, UpdateSourceTrigger=PropertyChanged}" />
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,8,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="单阶段最大重试" />
+                                        <TextBox Grid.Row="2"
+                                                 Grid.Column="1"
+                                                 Margin="0,8,0,0"
+                                                 Width="120"
+                                                 VerticalContentAlignment="Center"
+                                                 Text="{Binding AutomationMaxRetryPerStage, UpdateSourceTrigger=PropertyChanged}" />
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,8,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="轮询间隔(ms)" />
+                                        <TextBox Grid.Row="3"
+                                                 Grid.Column="1"
+                                                 Margin="0,8,0,0"
                                                  Width="120"
                                                  VerticalContentAlignment="Center"
                                                  Text="{Binding AutomationPollIntervalMilliseconds, UpdateSourceTrigger=PropertyChanged}" />
 
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,8,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="抓取行数" />
-                                        <TextBox Grid.Row="1"
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,8,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="抓取行数" />
+                                        <TextBox Grid.Row="4"
                                                  Grid.Column="1"
                                                  Margin="0,8,0,0"
                                                  Width="120"
                                                  VerticalContentAlignment="Center"
                                                  Text="{Binding AutomationCaptureLines, UpdateSourceTrigger=PropertyChanged}" />
 
-                                        <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,8,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="超时(秒)" />
-                                        <TextBox Grid.Row="2"
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,8,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="超时(秒)" />
+                                        <TextBox Grid.Row="5"
                                                  Grid.Column="1"
                                                  Margin="0,8,0,0"
                                                  Width="120"
                                                  VerticalContentAlignment="Center"
                                                  Text="{Binding AutomationTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}" />
 
-                                        <CheckBox Grid.Row="3"
-                                                  Grid.Column="1"
-                                                  Margin="0,10,0,0"
-                                                  IsChecked="{Binding AutomationSubmitOnSend}"
-                                                  Content="自动编排发送后自动回车提交" />
-                                        <CheckBox Grid.Row="3"
-                                                  Grid.Column="1"
-                                                  Margin="0,38,0,0"
-                                                  IsChecked="{Binding AutomationObserverEnabled}"
-                                                  Content="自动模式启用四格镜像视图（下方两格实时镜像 Claude/Codex 输出）" />
+                                        <StackPanel Grid.Row="6"
+                                                    Grid.Column="1"
+                                                    Margin="0,10,0,0">
+                                            <CheckBox IsChecked="{Binding AutomationSubmitOnSend}"
+                                                      Content="自动编排发送后自动回车提交" />
+                                            <CheckBox Margin="0,8,0,0"
+                                                      IsChecked="{Binding AutomationObserverEnabled}"
+                                                      Content="自动模式启用四格镜像视图（下方两格实时镜像 Claude/Codex 输出）" />
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
 
@@ -441,7 +485,7 @@
                                            FontSize="15"
                                            FontWeight="SemiBold"
                                            Foreground="{DynamicResource TextPrimaryBrush}"
-                                           Text="待审批计划" />
+                                           Text="人工接管 / 待审批计划" />
 
                                 <Border Padding="12"
                                         CornerRadius="8"
@@ -515,7 +559,7 @@
 
                                 <TextBlock Margin="0,12,0,6"
                                            Foreground="{DynamicResource TextSecondaryBrush}"
-                                           Text="审批备注（批准时会附加给 Codex，退回时会发送给 Claude）" />
+                                           Text="人工接管备注（批准时会附加给 Codex，退回时会发送给 Claude）" />
                                 <TextBox Padding="8"
                                          MinHeight="72"
                                          TextWrapping="Wrap"
@@ -526,7 +570,7 @@
                                 <StackPanel Margin="0,12,0,0"
                                             Orientation="Horizontal">
                                     <Button Padding="14,6"
-                                            Content="批准并发送给 Codex"
+                                            Content="人工继续并发送给 Codex"
                                             Click="ApprovePlan_Click"
                                             IsEnabled="{Binding CanApproveAutomation}" />
                                     <Button Margin="10,0,0,0"

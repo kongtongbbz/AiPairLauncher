@@ -21,6 +21,13 @@ public enum ReviewDecision
     Blocked,
 }
 
+public enum AutomationAdvancePolicy
+{
+    ManualEachStage,
+    ManualFirstStageThenAuto,
+    FullAutoLoop,
+}
+
 public enum AutomationStageStatus
 {
     Idle,

@@ -108,15 +108,22 @@ internal static class AutomationTestHelpers
         };
     }
 
-    public static AutomationSettings CreateSettings(int timeoutSeconds = 2)
+    public static AutomationSettings CreateSettings(
+        int timeoutSeconds = 2,
+        AutomationAdvancePolicy advancePolicy = AutomationAdvancePolicy.FullAutoLoop,
+        int maxAutoStages = 8,
+        int maxRetryPerStage = 2)
     {
         return new AutomationSettings
         {
             InitialTaskPrompt = "请实现自动编排并完成验证。",
+            AdvancePolicy = advancePolicy,
             PollIntervalMilliseconds = 200,
             CaptureLines = 220,
             SubmitOnSend = true,
             NoProgressTimeoutSeconds = timeoutSeconds,
+            MaxAutoStages = maxAutoStages,
+            MaxRetryPerStage = maxRetryPerStage,
         };
     }
 

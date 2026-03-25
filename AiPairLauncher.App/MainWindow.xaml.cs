@@ -313,17 +313,20 @@ public partial class MainWindow : Window
         {
             IsEnabled = _viewModel.AutoModeEnabled,
             InitialTaskPrompt = _viewModel.AutomationTaskPrompt.Trim(),
+            AdvancePolicy = _viewModel.SelectedAutomationAdvancePolicy,
             PollIntervalMilliseconds = _viewModel.AutomationPollIntervalMilliseconds,
             CaptureLines = _viewModel.AutomationCaptureLines,
             SubmitOnSend = _viewModel.AutomationSubmitOnSend,
             NoProgressTimeoutSeconds = _viewModel.AutomationTimeoutSeconds,
+            MaxAutoStages = _viewModel.AutomationMaxAutoStages,
+            MaxRetryPerStage = _viewModel.AutomationMaxRetryPerStage,
         };
 
         await _autoCollaborationCoordinator!
             .StartAsync(_currentSession, settings)
             .ConfigureAwait(true);
 
-        _viewModel.AppendLog("自动编排已启动，等待 Claude 输出第一阶段计划。");
+        _viewModel.AppendLog($"自动编排已启动，推进策略: {_viewModel.SelectedAutomationAdvancePolicyKey}。");
         _viewModel.FooterMessage = "自动编排已启动";
     }
 
@@ -357,6 +360,11 @@ public partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(state.LastError))
             {
                 _viewModel.AppendLog($"自动编排错误: {state.LastError}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(state.InterventionReason))
+            {
+                _viewModel.AppendLog($"自动编排转人工接管: {state.InterventionReason}");
             }
 
             _viewModel.FooterMessage = state.LastError is null
@@ -478,4 +486,5 @@ public partial class MainWindow : Window
             _viewModel.IsBusy = false;
         }
     }
+
 }

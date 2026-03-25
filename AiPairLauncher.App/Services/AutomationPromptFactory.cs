@@ -133,12 +133,12 @@ BODY
         builder.AppendLine();
         builder.AppendLine("回复要求：");
         builder.AppendLine("1. 回复以字面量 [AIPAIR_PACKET] 开头，并以字面量 [/AIPAIR_PACKET] 结束。");
-        builder.AppendLine("2. role 固定 claude，kind 固定 review_decision，stage_id 使用当前阶段号。");
+        builder.AppendLine("2. role 固定 claude，kind 固定 review_decision。");
         builder.AppendLine("3. decision 只能是 next_stage、retry_stage、complete、blocked。");
         builder.AppendLine("4. 必须包含字段：role、kind、stage_id、decision、body。");
         builder.AppendLine("5. 当 decision=next_stage 或 retry_stage 时，额外必须包含 title、summary、steps、acceptance、codex_brief。");
         builder.AppendLine("6. 多行字段写法固定：summary 用 SUMMARY，steps 用 STEPS，acceptance 用 ACCEPTANCE，codex_brief 用 CODEX_BRIEF，body 用 BODY。");
-        builder.AppendLine("7. stage_id 必须是从 1 开始的正整数，禁止使用 0。");
+        builder.AppendLine("7. stage_id 必须是从 1 开始的正整数，禁止使用 0。decision=next_stage 时，stage_id 必须等于当前阶段号 + 1；decision=retry_stage、complete、blocked 时，stage_id 必须等于当前阶段号。");
         builder.AppendLine("8. 审定时优先看核心验收标准是否已经满足，不要因为 PowerShell、shell snapshot、环境 warning、补充性自检失败等与核心交付无关的噪音就默认 retry_stage。");
         builder.AppendLine("9. 如果 Codex 已经提供足够证据证明核心目标达成，你应直接输出 complete。只有核心目标未完成或关键证据缺失时，才输出 retry_stage 或 blocked。");
         builder.AppendLine("10. decision=complete 或 blocked 时，不要输出 title、summary、steps、acceptance、codex_brief。");
@@ -199,13 +199,13 @@ BODY
 
         builder.AppendLine();
         builder.AppendLine("请保留严格的结构化格式，不要在包外补充说明。");
-        builder.AppendLine("stage_id 必须是从 1 开始的正整数，禁止使用 0。");
+        builder.AppendLine($"stage_id 必须固定为当前退回阶段 {draft.StageId}，且必须是从 1 开始的正整数，禁止使用 0。");
         builder.AppendLine("严格复制下面这个模板的语法，只替换内容，不要改字段名、冒号、结束标记或闭合标签：");
-        builder.AppendLine("""
+        builder.AppendLine($"""
 [AIPAIR_PACKET]
 role: claude
 kind: stage_plan
-stage_id: 1
+stage_id: {draft.StageId}
 title: 示例标题
 summary: <<<SUMMARY
 这里写阶段摘要
