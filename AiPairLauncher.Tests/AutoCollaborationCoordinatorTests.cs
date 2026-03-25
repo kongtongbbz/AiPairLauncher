@@ -312,6 +312,32 @@ public sealed class AutoCollaborationCoordinatorTests
         await coordinator.StopAsync();
     }
 
+    [Fact(DisplayName = "test_reject_identical_stage_plan_in_new_round_is_reprocessed")]
+    public async Task RejectIdenticalStagePlanInNewRoundIsReprocessedAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var stagePlanPacket = AutomationTestHelpers.BuildStagePlanPacket(1, "阶段一计划", "执行阶段一");
+
+        fakeWezTerm.SetPaneText(session.LeftPaneId, stagePlanPacket);
+        await coordinator.StartAsync(session, CreateManualSettings());
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        await coordinator.RejectAsync("请重新整理阶段一");
+        fakeWezTerm.SetPaneText(session.LeftPaneId, RepeatPacket(stagePlanPacket));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        var state = coordinator.GetCurrentState();
+        Assert.Equal(1, state.CurrentStageId);
+        Assert.Equal("上轮计划已被人工退回，请确认重拟结果。", state.InterventionReason);
+        Assert.Equal("执行阶段一", state.PendingApproval!.CodexBrief);
+        Assert.Null(state.LastError);
+
+        await coordinator.StopAsync();
+    }
+
     [Fact(DisplayName = "test_reject_later_stage_revision_prompt_uses_current_stage_id")]
     public async Task RejectLaterStageRevisionPromptUsesCurrentStageIdAsync()
     {
@@ -335,6 +361,79 @@ public sealed class AutoCollaborationCoordinatorTests
         var prompt = fakeWezTerm.SentAutomationPrompts.Last().Prompt;
         Assert.Contains("退回阶段: 2", prompt);
         Assert.Contains("stage_id: 2", prompt);
+    }
+
+    [Fact(DisplayName = "test_retry_identical_execution_report_in_new_round_is_reprocessed")]
+    public async Task RetryIdenticalExecutionReportInNewRoundIsReprocessedAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var executionReportPacket = AutomationTestHelpers.BuildExecutionReportPacket(1, "首轮执行完成");
+
+        fakeWezTerm.SetPaneText(session.LeftPaneId, AutomationTestHelpers.BuildStagePlanPacket(1));
+        await coordinator.StartAsync(session, CreateFullAutoSettings());
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForCodexReport));
+
+        fakeWezTerm.SetPaneText(session.RightPaneId, executionReportPacket);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudeReview));
+
+        fakeWezTerm.SetPaneText(session.LeftPaneId, AutomationTestHelpers.BuildReviewDecisionPacket(1, "retry_stage", "重试阶段一"));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForCodexReport &&
+            coordinator.GetCurrentState().CurrentStageRetryCount == 1));
+
+        fakeWezTerm.SetPaneText(session.RightPaneId, RepeatPacket(executionReportPacket));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudeReview));
+
+        var state = coordinator.GetCurrentState();
+        Assert.Equal(1, state.CurrentStageId);
+        Assert.Equal(1, state.CurrentStageRetryCount);
+        Assert.Null(state.LastError);
+
+        await coordinator.StopAsync();
+    }
+
+    [Fact(DisplayName = "test_identical_review_decision_after_identical_report_advances_new_round")]
+    public async Task IdenticalReviewDecisionAfterIdenticalReportAdvancesNewRoundAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var executionReportPacket = AutomationTestHelpers.BuildExecutionReportPacket(1, "首轮执行完成");
+        var retryDecisionPacket = AutomationTestHelpers.BuildReviewDecisionPacket(1, "retry_stage", "重试阶段一");
+
+        fakeWezTerm.SetPaneText(session.LeftPaneId, AutomationTestHelpers.BuildStagePlanPacket(1));
+        await coordinator.StartAsync(session, CreateFullAutoSettings(maxRetryPerStage: 3));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForCodexReport));
+
+        fakeWezTerm.SetPaneText(session.RightPaneId, executionReportPacket);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudeReview));
+
+        fakeWezTerm.SetPaneText(session.LeftPaneId, retryDecisionPacket);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForCodexReport &&
+            coordinator.GetCurrentState().CurrentStageRetryCount == 1));
+
+        fakeWezTerm.SetPaneText(session.RightPaneId, RepeatPacket(executionReportPacket));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudeReview));
+
+        await Task.Delay(450);
+        Assert.Equal(AutomationStageStatus.WaitingForClaudeReview, coordinator.GetCurrentState().Status);
+        Assert.Null(coordinator.GetCurrentState().LastError);
+
+        fakeWezTerm.SetPaneText(session.LeftPaneId, RepeatPacket(retryDecisionPacket));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForCodexReport &&
+            coordinator.GetCurrentState().CurrentStageRetryCount == 2));
+
+        var state = coordinator.GetCurrentState();
+        Assert.Equal(1, state.CurrentStageId);
+        Assert.Equal(2, state.CurrentStageRetryCount);
+        Assert.Equal(6, fakeWezTerm.SentAutomationPrompts.Count);
+        Assert.Null(state.LastError);
+
+        await coordinator.StopAsync();
     }
 
     [Fact(DisplayName = "test_pause_on_wezterm_failure")]
@@ -490,5 +589,10 @@ Quick safety check:
             advancePolicy: AutomationAdvancePolicy.FullAutoLoop,
             maxAutoStages: maxAutoStages,
             maxRetryPerStage: maxRetryPerStage);
+    }
+
+    private static string RepeatPacket(string packet)
+    {
+        return string.Join(Environment.NewLine, packet, packet);
     }
 }

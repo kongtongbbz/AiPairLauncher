@@ -4,11 +4,14 @@ namespace AiPairLauncher.App.Services;
 
 public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 {
+    private const string PacketStartMarker = "[AIPAIR_PACKET]";
+    private const string PacketEndMarker = "[/AIPAIR_PACKET]";
+
     private readonly IWezTermService _wezTermService;
     private readonly IAgentPacketParser _packetParser;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<int, string> _paneSnapshots = new();
-    private readonly HashSet<string> _processedFingerprints = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ProcessedPacketState> _processedFingerprints = new(StringComparer.Ordinal);
 
     private AutomationRunState _state = new();
     private CancellationTokenSource? _loopCts;
@@ -18,6 +21,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
     private DateTimeOffset _lastProgressAt = DateTimeOffset.Now;
     private int _autoApprovedStageCount;
     private int _currentStageRetryCount;
+    private int _currentPollingRound;
     private bool _isFirstStageManualGateSatisfied;
     private bool _forceManualApprovalForNextStagePlan;
 
@@ -60,6 +64,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             _lastProgressAt = DateTimeOffset.Now;
             _autoApprovedStageCount = 0;
             _currentStageRetryCount = 0;
+            _currentPollingRound = 0;
             _isFirstStageManualGateSatisfied = false;
             _forceManualApprovalForNextStagePlan = false;
             _loopCts = new CancellationTokenSource();
@@ -256,14 +261,15 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         }
 
         var packet = parseOutcome.Packet ?? throw new InvalidOperationException("结构化包解析成功但没有生成数据包。");
-        if (_processedFingerprints.Contains(packet.Fingerprint))
+        var packetOccurrenceCount = CountPacketOccurrences(paneText, packet);
+        if (ShouldIgnoreProcessedPacket(packet, packetOccurrenceCount))
         {
             EnsureNotTimedOut(hasPaneProgress);
             return;
         }
 
         ValidatePacketForState(packet);
-        _processedFingerprints.Add(packet.Fingerprint);
+        _processedFingerprints[packet.Fingerprint] = new ProcessedPacketState(_currentPollingRound, packetOccurrenceCount);
         _lastProgressAt = DateTimeOffset.Now;
 
         switch (_state.Status)
@@ -421,6 +427,81 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         }
     }
 
+    private bool ShouldIgnoreProcessedPacket(AgentPacket packet, int packetOccurrenceCount)
+    {
+        if (!_processedFingerprints.TryGetValue(packet.Fingerprint, out var processedPacketState))
+        {
+            return false;
+        }
+
+        if (processedPacketState.PollingRound == _currentPollingRound)
+        {
+            return true;
+        }
+
+        if (!IsPacketExpectedForCurrentState(packet))
+        {
+            return true;
+        }
+
+        return packetOccurrenceCount <= processedPacketState.OccurrenceCount;
+    }
+
+    private bool IsPacketExpectedForCurrentState(AgentPacket packet)
+    {
+        return _state.Status switch
+        {
+            AutomationStageStatus.WaitingForClaudePlan => IsStagePlanExpected(packet),
+            AutomationStageStatus.WaitingForCodexReport => IsExecutionReportExpected(packet),
+            AutomationStageStatus.WaitingForClaudeReview => IsReviewDecisionExpected(packet),
+            _ => false,
+        };
+    }
+
+    private bool IsStagePlanExpected(AgentPacket packet)
+    {
+        if (packet.Role != AgentRole.Claude || packet.Kind != PacketKind.StagePlan)
+        {
+            return false;
+        }
+
+        if (!_state.CurrentStageId.HasValue)
+        {
+            return packet.StageId == 1;
+        }
+
+        return packet.StageId == _state.CurrentStageId.Value;
+    }
+
+    private bool IsExecutionReportExpected(AgentPacket packet)
+    {
+        return packet.Role == AgentRole.Codex &&
+               packet.Kind == PacketKind.ExecutionReport &&
+               _state.CurrentStageId.HasValue &&
+               packet.StageId == _state.CurrentStageId.Value;
+    }
+
+    private bool IsReviewDecisionExpected(AgentPacket packet)
+    {
+        if (packet.Role != AgentRole.Claude ||
+            packet.Kind != PacketKind.ReviewDecision ||
+            !_state.CurrentStageId.HasValue ||
+            packet.Decision is null)
+        {
+            return false;
+        }
+
+        var currentStageId = _state.CurrentStageId.Value;
+        return packet.Decision.Value switch
+        {
+            ReviewDecision.NextStage => packet.StageId == currentStageId + 1,
+            ReviewDecision.RetryStage => packet.StageId == currentStageId,
+            ReviewDecision.Complete => packet.StageId == currentStageId,
+            ReviewDecision.Blocked => packet.StageId == currentStageId,
+            _ => false,
+        };
+    }
+
     private void ValidateStagePlanPacket(AgentPacket packet)
     {
         if (packet.Role != AgentRole.Claude || packet.Kind != PacketKind.StagePlan)
@@ -507,6 +588,11 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private static string BuildPaneSnapshot(string paneText)
     {
+        return NormalizePaneText(paneText);
+    }
+
+    private static string NormalizePaneText(string paneText)
+    {
         if (string.IsNullOrWhiteSpace(paneText))
         {
             return string.Empty;
@@ -515,6 +601,48 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         return paneText
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Trim();
+    }
+
+    private static int CountPacketOccurrences(string paneText, AgentPacket packet)
+    {
+        var normalizedPaneText = NormalizePaneText(paneText);
+        if (string.IsNullOrWhiteSpace(normalizedPaneText))
+        {
+            return 0;
+        }
+
+        var decoratedBlock = $"{PacketStartMarker}\n{packet.RawText}\n{PacketEndMarker}";
+        var decoratedOccurrenceCount = CountOccurrences(normalizedPaneText, decoratedBlock);
+        if (decoratedOccurrenceCount > 0)
+        {
+            return decoratedOccurrenceCount;
+        }
+
+        return CountOccurrences(normalizedPaneText, packet.RawText);
+    }
+
+    private static int CountOccurrences(string source, string value)
+    {
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(value))
+        {
+            return 0;
+        }
+
+        var count = 0;
+        var searchIndex = 0;
+        while (searchIndex < source.Length)
+        {
+            var foundIndex = source.IndexOf(value, searchIndex, StringComparison.Ordinal);
+            if (foundIndex < 0)
+            {
+                break;
+            }
+
+            count += 1;
+            searchIndex = foundIndex + value.Length;
+        }
+
+        return count;
     }
 
     private void EnsureNotTimedOut(bool hasPaneProgress = false)
@@ -661,6 +789,12 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         string? lastError = null,
         string? interventionReason = null)
     {
+        if (IsPollingStatus(status) &&
+            (_state.Status != status || _state.CurrentStageId != currentStageId))
+        {
+            _currentPollingRound += 1;
+        }
+
         _state = new AutomationRunState
         {
             Status = status,
@@ -684,6 +818,13 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         StateChanged?.Invoke(this, _state);
     }
 
+    private static bool IsPollingStatus(AutomationStageStatus status)
+    {
+        return status is AutomationStageStatus.WaitingForClaudePlan
+            or AutomationStageStatus.WaitingForCodexReport
+            or AutomationStageStatus.WaitingForClaudeReview;
+    }
+
     private void DetectInteractivePromptOrThrow(string paneText)
     {
         if (string.IsNullOrWhiteSpace(paneText))
@@ -698,4 +839,6 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             throw new InvalidOperationException("Claude 正在等待工作区信任确认，请先在左侧 pane 手动确认该目录，再重新启动自动模式。");
         }
     }
+
+    private readonly record struct ProcessedPacketState(int PollingRound, int OccurrenceCount);
 }
