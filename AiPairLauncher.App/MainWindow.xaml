@@ -669,7 +669,15 @@
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="组件" Binding="{Binding Name}" Width="90" />
                                     <DataGridTextColumn Header="版本" Binding="{Binding Version}" Width="140" />
-                                    <DataGridTextColumn Header="提示" Binding="{Binding Message}" Width="*" />
+                                    <DataGridTemplateColumn Header="提示" Width="220">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock TextWrapping="Wrap"
+                                                           Text="{Binding Message}"
+                                                           ToolTip="{Binding Message}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Grid>

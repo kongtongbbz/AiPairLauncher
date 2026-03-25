@@ -62,6 +62,7 @@ public sealed class DependencyService : IDependencyService
             {
                 Name = name,
                 IsAvailable = false,
+                Version = "missing",
                 Message = "未找到可执行文件。",
             };
         }
@@ -84,7 +85,9 @@ public sealed class DependencyService : IDependencyService
                 IsAvailable = true,
                 ResolvedPath = resolvedPath,
                 Version = string.IsNullOrWhiteSpace(version) ? "unknown" : version,
-                Message = result.IsSuccess ? null : "命令可执行，但版本探测返回非零码。",
+                Message = result.IsSuccess
+                    ? "命令可执行，版本探测成功。"
+                    : "命令可执行，但版本探测返回非零码。",
             };
         }
         catch (Exception ex)
@@ -112,4 +115,3 @@ public sealed class DependencyService : IDependencyService
             .FirstOrDefault();
     }
 }
-
