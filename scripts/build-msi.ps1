@@ -20,11 +20,12 @@ function Get-ProjectVersion {
 
     $projectXml = [xml](Get-Content -LiteralPath $CsprojPath -Raw)
     $versionNode = $projectXml.Project.PropertyGroup.Version | Select-Object -First 1
-    if ($null -eq $versionNode -or [string]::IsNullOrWhiteSpace($versionNode.InnerText)) {
+    $versionText = if ($null -eq $versionNode) { "" } elseif ($versionNode -is [string]) { $versionNode } else { $versionNode.InnerText }
+    if ([string]::IsNullOrWhiteSpace($versionText)) {
         return "1.2.1"
     }
 
-    return $versionNode.InnerText.Trim()
+    return $versionText.Trim()
 }
 
 function Assert-PathExists {
