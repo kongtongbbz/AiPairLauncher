@@ -2,6 +2,8 @@ namespace AiPairLauncher.App.Models;
 
 public sealed class WorktreeLaunchContext
 {
+    public string GitRoot { get; init; } = string.Empty;
+
     public string WorkingDirectory { get; init; } = string.Empty;
 
     public bool UsedWorktree { get; init; }
@@ -9,6 +11,8 @@ public sealed class WorktreeLaunchContext
     public string WorktreeStrategy { get; init; } = "none";
 
     public string? BranchName { get; init; }
+
+    public bool IsExistingWorktree { get; init; }
 
     public string Summary { get; init; } = string.Empty;
 }

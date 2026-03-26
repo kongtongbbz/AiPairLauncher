@@ -102,6 +102,82 @@ public sealed class ManagedSessionRecord
     [JsonIgnore]
     public string ModeSummary => $"Claude {Session.ClaudePermissionMode} / Codex {Session.CodexMode}";
 
+    [JsonIgnore]
+    public bool UsesWorktree =>
+        Session.WorkingDirectory.Contains(
+            $"{Path.DirectorySeparatorChar}.worktrees{Path.DirectorySeparatorChar}",
+            StringComparison.OrdinalIgnoreCase)
+        || Session.WorkingDirectory.Contains(
+            $"{Path.AltDirectorySeparatorChar}.worktrees{Path.AltDirectorySeparatorChar}",
+            StringComparison.OrdinalIgnoreCase);
+
+    [JsonIgnore]
+    public string WorktreeDisplayText => UsesWorktree ? "worktree" : "主目录";
+
+    [JsonIgnore]
+    public string BadgeSummary
+    {
+        get
+        {
+            var badges = new List<string>();
+            if (IsPinned)
+            {
+                badges.Add("置顶");
+            }
+
+            if (!string.IsNullOrWhiteSpace(LaunchProfileId))
+            {
+                badges.Add("模板");
+            }
+
+            if (Session.AutomationEnabledAtLaunch)
+            {
+                badges.Add("自动");
+            }
+
+            if (UsesWorktree)
+            {
+                badges.Add("worktree");
+            }
+
+            return badges.Count == 0 ? "标准" : string.Join(" · ", badges);
+        }
+    }
+
+    [JsonIgnore]
+    public int PendingActionCount
+    {
+        get
+        {
+            var count = 0;
+            if (StatusSnapshot.NeedsApproval)
+            {
+                count += 1;
+            }
+
+            if (HealthStatus is SessionHealthStatus.Waiting or SessionHealthStatus.Error or SessionHealthStatus.Detached)
+            {
+                count += 1;
+            }
+
+            return count;
+        }
+    }
+
+    [JsonIgnore]
+    public string PreviewSnippet
+    {
+        get
+        {
+            var claude = string.IsNullOrWhiteSpace(StatusSnapshot.ClaudePreview) ? "暂无输出" : StatusSnapshot.ClaudePreview.Trim();
+            var codex = string.IsNullOrWhiteSpace(StatusSnapshot.CodexPreview) ? "暂无输出" : StatusSnapshot.CodexPreview.Trim();
+            return $"Claude: {claude}{Environment.NewLine}Codex: {codex}";
+        }
+    }
+
+    [JsonIgnore]
+    public string ArchiveActionLabel => IsArchived ? "恢复" : "归档";
+
     public ManagedSessionRecord Clone()
     {
         return new ManagedSessionRecord

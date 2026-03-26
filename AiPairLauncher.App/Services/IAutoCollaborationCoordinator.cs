@@ -10,6 +10,12 @@ public interface IAutoCollaborationCoordinator
 
     Task StartAsync(LauncherSession session, AutomationSettings settings, CancellationToken cancellationToken = default);
 
+    Task RestoreAsync(
+        LauncherSession session,
+        AutomationSettings settings,
+        AutomationRunState state,
+        CancellationToken cancellationToken = default);
+
     Task ApproveAsync(string? userNote, CancellationToken cancellationToken = default);
 
     Task RejectAsync(string? userNote, CancellationToken cancellationToken = default);

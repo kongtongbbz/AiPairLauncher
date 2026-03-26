@@ -5,15 +5,16 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="AiPairLauncher"
-        Width="1500"
-        Height="940"
-        MinWidth="1320"
-        MinHeight="820"
+        Width="1560"
+        Height="980"
+        MinWidth="1380"
+        MinHeight="860"
         WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/assets/AiPairLauncher.ico"
         Background="{DynamicResource AppBackgroundBrush}">
     <Grid Margin="18">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="180" />
@@ -33,51 +34,103 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel>
-                    <TextBlock FontSize="26"
+                    <TextBlock FontSize="28"
                                FontWeight="SemiBold"
                                Text="AiPairLauncher Mission Control" />
                     <TextBlock Margin="0,6,0,0"
                                Foreground="{DynamicResource TextSecondaryBrush}"
-                               Text="Claude / Codex 双栏协作的多会话指挥台" />
+                               Text="多会话双 AI 工作台：会话治理、过程可视、自动编排、上下文桥接" />
                 </StackPanel>
 
                 <StackPanel Grid.Column="1"
                             Orientation="Horizontal"
-                            VerticalAlignment="Center">
-                    <ComboBox Width="120"
-                              Margin="0,0,12,0"
-                              SelectedValuePath="Value"
-                              DisplayMemberPath="Label"
-                              ItemsSource="{Binding ThemeOptions}"
-                              SelectedValue="{Binding SelectedThemeMode, UpdateSourceTrigger=PropertyChanged}"
-                              SelectionChanged="ThemeSelector_SelectionChanged" />
+                            VerticalAlignment="Top">
                     <Border Padding="10,6"
-                            Margin="0,0,12,0"
-                            CornerRadius="10"
+                            Margin="0,0,10,0"
+                            CornerRadius="12"
+                            Background="{DynamicResource CardBackgroundSoftBrush}"
+                            BorderBrush="{DynamicResource BorderBrushSoft}"
+                            BorderThickness="1">
+                        <TextBlock Text="{Binding AppVersionText}" />
+                    </Border>
+                    <Border Padding="10,6"
+                            Margin="0,0,10,0"
+                            CornerRadius="12"
                             Background="{DynamicResource CardBackgroundSoftBrush}"
                             BorderBrush="{DynamicResource BorderBrushSoft}"
                             BorderThickness="1">
                         <TextBlock Text="{Binding SessionCounterSummary}" />
                     </Border>
-                    <TextBox Width="240"
-                             Margin="0,0,12,0"
-                             Text="{Binding SessionSearchText, UpdateSourceTrigger=PropertyChanged}" />
-                    <Button Margin="0,0,12,0"
-                            Content="刷新会话"
-                            Click="RefreshSessions_Click"
-                            IsEnabled="{Binding CanStart}" />
-                    <Button Content="刷新依赖"
-                            Click="RefreshDependencies_Click"
-                            IsEnabled="{Binding CanStart}" />
+                    <Border Padding="10,6"
+                            Margin="0,0,10,0"
+                            CornerRadius="12"
+                            Background="{DynamicResource CardBackgroundSoftBrush}"
+                            BorderBrush="{DynamicResource BorderBrushSoft}"
+                            BorderThickness="1">
+                        <TextBlock Text="{Binding PendingQueueSummary}" />
+                    </Border>
+                    <ComboBox Width="128"
+                              SelectedValuePath="Value"
+                              DisplayMemberPath="Label"
+                              ItemsSource="{Binding ThemeOptions}"
+                              SelectedValue="{Binding SelectedThemeMode, UpdateSourceTrigger=PropertyChanged}"
+                              SelectionChanged="ThemeSelector_SelectionChanged" />
                 </StackPanel>
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1" Margin="0,16,0,16">
+        <Border Grid.Row="1"
+                Margin="0,14,0,0"
+                Padding="14"
+                CornerRadius="16"
+                Background="{DynamicResource CardBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderBrushSoft}"
+                BorderThickness="1"
+                Visibility="{Binding HasPendingSessions, Converter={StaticResource BoolToVisibilityConverter}}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Margin="0,0,12,0"
+                           VerticalAlignment="Center"
+                           FontWeight="SemiBold"
+                           Text="待处理队列" />
+                <ListBox Grid.Column="1"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         ItemsSource="{Binding PendingSessionRecords}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Button Margin="0,0,10,6"
+                                    Padding="12,8"
+                                    Tag="{Binding SessionId}"
+                                    Click="SelectPendingSession_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock FontWeight="SemiBold"
+                                               Text="{Binding DisplayName}" />
+                                    <TextBlock Margin="8,0,0,0"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="{Binding HealthDisplayText}" />
+                                </StackPanel>
+                            </Button>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,16,0,16">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="330" />
-                <ColumnDefinition Width="1.2*" />
-                <ColumnDefinition Width="1.05*" />
+                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="430" />
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0"
@@ -90,13 +143,52 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock FontSize="18"
-                               FontWeight="SemiBold"
-                               Text="会话目录" />
-                    <TextBlock Grid.Row="1"
-                               Margin="0,6,0,12"
-                               Foreground="{DynamicResource TextSecondaryBrush}"
-                               Text="从左侧选择会话，中间查看详情，右侧执行启动与自动编排。" />
+                    <StackPanel>
+                        <TextBlock FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Text="会话导航" />
+                        <TextBlock Margin="0,6,0,0"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Text="搜索、筛选、置顶、归档并快速切换当前会话" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="1" Margin="0,14,0,12">
+                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="搜索" />
+                        <TextBox Margin="0,6,0,0"
+                                 Text="{Binding SessionSearchText, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Margin="0,12,0,0"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Text="状态筛选" />
+                        <ComboBox Margin="0,6,0,0"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Label"
+                                  ItemsSource="{Binding SessionStatusFilterOptions}"
+                                  SelectedValue="{Binding SelectedSessionStatusFilter, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Margin="0,12,0,0"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Text="分组筛选" />
+                        <ComboBox Margin="0,6,0,0"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Label"
+                                  ItemsSource="{Binding SessionGroupOptions}"
+                                  SelectedValue="{Binding SelectedSessionGroupFilter, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <CheckBox Margin="0,12,0,0"
+                                  IsChecked="{Binding ShowArchivedSessions}"
+                                  Content="显示已归档会话" />
+
+                        <WrapPanel Margin="0,12,0,0">
+                            <Button Margin="0,0,10,0"
+                                    Content="刷新会话"
+                                    Click="RefreshSessions_Click"
+                                    IsEnabled="{Binding CanStart}" />
+                            <Button Content="刷新依赖"
+                                    Click="RefreshDependencies_Click"
+                                    IsEnabled="{Binding CanStart}" />
+                        </WrapPanel>
+                    </StackPanel>
 
                     <ListBox Grid.Row="2"
                              ItemsSource="{Binding SessionRecords}"
@@ -105,44 +197,91 @@
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Border Padding="14"
-                                        CornerRadius="14"
+                                        CornerRadius="16"
                                         Background="{DynamicResource CardBackgroundSoftBrush}"
                                         BorderBrush="{DynamicResource BorderBrushSoft}"
                                         BorderThickness="1">
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontSize="15"
+                                                           FontWeight="SemiBold"
+                                                           Text="{Binding DisplayName}" />
+                                                <TextBlock Margin="0,4,0,0"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                                           Text="{Binding GroupName}" />
+                                            </StackPanel>
+                                            <Border Grid.Column="1"
+                                                    Padding="8,3"
+                                                    CornerRadius="999"
+                                                    Background="{DynamicResource ListBadgeBackgroundBrush}">
+                                                <TextBlock FontSize="11"
+                                                           Foreground="{DynamicResource AccentBrush}"
+                                                           Text="{Binding HealthDisplayText}" />
+                                            </Border>
+                                        </Grid>
 
-                                        <TextBlock FontSize="15"
-                                                   FontWeight="SemiBold"
-                                                   Text="{Binding DisplayName}" />
-                                        <Border Grid.Column="1"
-                                                Padding="8,3"
-                                                CornerRadius="999"
-                                                Background="{DynamicResource ListBadgeBackgroundBrush}">
-                                            <TextBlock FontSize="11"
-                                                       Foreground="{DynamicResource AccentBrush}"
-                                                       Text="{Binding HealthDisplayText}" />
-                                        </Border>
-
-                                        <TextBlock Grid.Row="1"
-                                                   Grid.ColumnSpan="2"
-                                                   Margin="0,8,0,0"
+                                        <TextBlock Margin="0,10,0,0"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"
-                                                   Text="{Binding WorkingDirectoryName}" />
-                                        <TextBlock Grid.Row="2"
-                                                   Grid.ColumnSpan="2"
-                                                   Margin="0,8,0,0"
+                                                   Text="{Binding BadgeSummary}" />
+
+                                        <TextBlock Margin="0,8,0,0"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding PreviewSnippet}" />
+
+                                        <WrapPanel Margin="0,10,0,0">
+                                            <Button Margin="0,0,8,8"
+                                                    Padding="10,6"
+                                                    Tag="{Binding SessionId}"
+                                                    Content="置顶"
+                                                    Click="TogglePinSession_Click" />
+                                            <Button Margin="0,0,8,8"
+                                                    Padding="10,6"
+                                                    Tag="{Binding SessionId}"
+                                                    Content="复制配置"
+                                                    Click="CopySessionConfig_Click" />
+                                            <Button Margin="0,0,8,8"
+                                                    Padding="10,6"
+                                                    Tag="{Binding SessionId}"
+                                                    Content="归档"
+                                                    Click="ArchiveSession_Click">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsArchived}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+                                            <Button Margin="0,0,8,8"
+                                                    Padding="10,6"
+                                                    Tag="{Binding SessionId}"
+                                                    Content="恢复"
+                                                    Click="RestoreSession_Click">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsArchived}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+                                        </WrapPanel>
+
+                                        <TextBlock Margin="0,2,0,0"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                                    Text="{Binding LastSeenDisplay, StringFormat=最近活动 {0}}" />
-                                    </Grid>
+                                    </StackPanel>
                                 </Border>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
@@ -154,27 +293,22 @@
                           Margin="0,0,14,0"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
+                <StackPanel>
                     <Border Style="{DynamicResource CardBorderStyle}">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
+
                             <StackPanel>
-                                <TextBlock FontSize="21"
+                                <TextBlock FontSize="22"
                                            FontWeight="SemiBold"
                                            Text="{Binding SelectedSessionDisplayName}" />
                                 <TextBlock Margin="0,6,0,0"
                                            Foreground="{DynamicResource AccentBrush}"
                                            Text="{Binding SelectedSessionStatus}" />
-                                <TextBlock Margin="0,8,0,0"
+                                <TextBlock Margin="0,6,0,0"
                                            Foreground="{DynamicResource TextSecondaryBrush}"
                                            Text="{Binding SelectedSessionStatusDetail}" />
                             </StackPanel>
@@ -198,55 +332,183 @@
                                         Content="聚焦 Codex"
                                         Click="FocusCodexPane_Click"
                                         IsEnabled="{Binding CanFocusSelectedSession}" />
-                                <Button Margin="0,0,0,10"
-                                        Content="清理缓存"
+                                <Button Content="清理缓存"
                                         Click="ClearAppCache_Click"
                                         IsEnabled="{Binding CanStart}" />
                             </WrapPanel>
                         </Grid>
                     </Border>
 
-                    <UniformGrid Grid.Row="1"
-                                 Margin="0,14,0,14"
-                                 Columns="2">
-                        <Border Margin="0,0,10,10"
-                                Style="{DynamicResource CardBorderStyle}">
+                    <UniformGrid Margin="0,14,0,14" Columns="2">
+                        <Border Margin="0,0,10,10" Style="{DynamicResource CardBorderStyle}">
                             <StackPanel>
                                 <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="工作目录" />
                                 <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding SelectedSessionWorkingDirectory}" />
                             </StackPanel>
                         </Border>
-                        <Border Margin="0,0,0,10"
-                                Style="{DynamicResource CardBorderStyle}">
+                        <Border Margin="0,0,0,10" Style="{DynamicResource CardBorderStyle}">
                             <StackPanel>
-                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="最近活动" />
-                                <TextBlock Margin="0,6,0,0" Text="{Binding SelectedSessionLastSeen}" />
+                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="运行时绑定" />
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding SelectedSessionRuntimeSummary}" />
                             </StackPanel>
                         </Border>
-                        <Border Margin="0,0,10,0"
-                                Style="{DynamicResource CardBorderStyle}">
+                        <Border Margin="0,0,10,10" Style="{DynamicResource CardBorderStyle}">
                             <StackPanel>
-                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="代理模式" />
+                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="模式 / 徽标" />
                                 <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding SelectedSessionModeSummary}" />
+                                <TextBlock Margin="0,6,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding SelectedSessionBadgeSummary}" />
                             </StackPanel>
                         </Border>
-                        <Border Style="{DynamicResource CardBorderStyle}">
+                        <Border Margin="0,0,0,10" Style="{DynamicResource CardBorderStyle}">
                             <StackPanel>
-                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="模板 / 重连" />
+                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="模板 / worktree / 待处理" />
                                 <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding SelectedSessionLaunchProfileSummary}" />
-                                <TextBlock Margin="0,6,0,0"
-                                           Foreground="{DynamicResource TextSecondaryBrush}"
-                                           TextWrapping="Wrap"
-                                           Text="{Binding SelectedSessionReconnectSummary}" />
+                                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding SelectedSessionWorktreeSummary}" />
+                                <TextBlock Margin="0,6,0,0" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding SelectedSessionPendingSummary}" />
                             </StackPanel>
                         </Border>
                     </UniformGrid>
 
-                    <Border Grid.Row="2"
+                    <Border Margin="0,0,0,14"
                             Style="{DynamicResource CardBorderStyle}">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.ColumnSpan="2"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Text="会话元数据" />
+
+                            <StackPanel Grid.Row="1" Margin="0,12,10,0">
+                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="显示名称" />
+                                <TextBox Margin="0,6,0,0"
+                                         Text="{Binding EditableSessionDisplayName, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="1" Grid.Column="1" Margin="10,12,0,0">
+                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="分组" />
+                                <TextBox Margin="0,6,0,0"
+                                         Text="{Binding EditableSessionGroupName, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+
+                            <WrapPanel Grid.Row="2"
+                                       Grid.ColumnSpan="2"
+                                       Margin="0,14,0,0">
+                                <Button Margin="0,0,10,0"
+                                        Content="保存元数据"
+                                        Click="SaveSessionMetadata_Click"
+                                        IsEnabled="{Binding CanSaveSessionMetadata}" />
+                                <Button Margin="0,0,10,0"
+                                        Content="切换置顶"
+                                        Click="TogglePinSession_Click"
+                                        IsEnabled="{Binding CanTogglePinSelectedSession}"
+                                        Tag="{Binding SelectedSessionRecord.SessionId}" />
+                                <Button Margin="0,0,10,0"
+                                        Content="复制启动配置"
+                                        Click="CopySessionConfig_Click"
+                                        IsEnabled="{Binding CanCopySelectedSessionConfig}"
+                                        Tag="{Binding SelectedSessionRecord.SessionId}" />
+                                <Button Margin="0,0,10,0"
+                                        Content="归档"
+                                        Click="ArchiveSession_Click"
+                                        IsEnabled="{Binding CanArchiveSelectedSession}"
+                                        Tag="{Binding SelectedSessionRecord.SessionId}" />
+                                <Button Margin="0,0,10,0"
+                                        Content="恢复"
+                                        Click="RestoreSession_Click"
+                                        IsEnabled="{Binding CanRestoreSelectedSession}"
+                                        Tag="{Binding SelectedSessionRecord.SessionId}" />
+                                <Button Margin="0,0,10,0"
+                                        Content="打开目录"
+                                        Click="OpenWorktreePath_Click"
+                                        IsEnabled="{Binding HasSelectedSession}" />
+                                <Button Margin="0,0,10,0"
+                                        Content="清理 worktree"
+                                        Click="CleanupWorktree_Click"
+                                        IsEnabled="{Binding HasSelectedSession}" />
+                                <Button Content="清理孤儿 worktree"
+                                        Click="CleanupOrphanedWorktrees_Click"
+                                        IsEnabled="{Binding HasSelectedSession}" />
+                            </WrapPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Margin="0,0,0,14"
+                            Style="{DynamicResource CardBorderStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Text="最近输出预览" />
+                            <Grid Grid.Row="1" Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Margin="0,0,10,0"
+                                        Padding="12"
+                                        CornerRadius="12"
+                                        Background="{DynamicResource InsetBackgroundBrush}"
+                                        BorderBrush="{DynamicResource BorderBrushSoft}"
+                                        BorderThickness="1">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock FontWeight="SemiBold" Text="Claude" />
+                                        <TextBox Grid.Row="1"
+                                                 Margin="0,8,0,0"
+                                                 MinHeight="170"
+                                                 IsReadOnly="True"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Text="{Binding SelectedSessionClaudePreview, Mode=OneWay}" />
+                                    </Grid>
+                                </Border>
+
+                                <Border Grid.Column="1"
+                                        Margin="10,0,0,0"
+                                        Padding="12"
+                                        CornerRadius="12"
+                                        Background="{DynamicResource InsetBackgroundBrush}"
+                                        BorderBrush="{DynamicResource BorderBrushSoft}"
+                                        BorderThickness="1">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock FontWeight="SemiBold" Text="Codex" />
+                                        <TextBox Grid.Row="1"
+                                                 Margin="0,8,0,0"
+                                                 MinHeight="170"
+                                                 IsReadOnly="True"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Text="{Binding SelectedSessionCodexPreview, Mode=OneWay}" />
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{DynamicResource CardBorderStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -257,8 +519,7 @@
                                        FontWeight="SemiBold"
                                        Text="上下文桥接" />
 
-                            <WrapPanel Grid.Row="1"
-                                       Margin="0,10,0,12">
+                            <WrapPanel Grid.Row="1" Margin="0,12,0,12">
                                 <TextBlock VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextSecondaryBrush}"
                                            Text="抓取行数" />
@@ -271,422 +532,458 @@
                             </WrapPanel>
 
                             <TextBox Grid.Row="2"
-                                     MinHeight="200"
+                                     MinHeight="170"
                                      AcceptsReturn="True"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      Text="{Binding TransferInstruction, UpdateSourceTrigger=PropertyChanged}" />
 
-                            <Border Grid.Row="3"
-                                    Margin="0,14,0,0"
-                                    Padding="12"
-                                    CornerRadius="12"
-                                    Background="{DynamicResource InsetBackgroundBrush}"
-                                    BorderBrush="{DynamicResource BorderBrushSoft}"
-                                    BorderThickness="1">
-                                <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="*" />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="最近错误" />
-                                    <TextBox Grid.Row="1"
-                                             Margin="0,8,0,0"
-                                             MinHeight="96"
-                                             MaxHeight="180"
-                                             IsReadOnly="True"
-                                             AcceptsReturn="True"
-                                             TextWrapping="Wrap"
-                                             VerticalScrollBarVisibility="Auto"
-                                             Text="{Binding SelectedSessionLastError, Mode=OneWay}" />
-                                </Grid>
-                            </Border>
-
-                            <WrapPanel Grid.Row="4"
-                                       Margin="0,14,0,0">
-                                <Button Margin="0,0,10,0"
-                                        Content="左 → 右 发送"
-                                        Click="SendLeftToRight_Click"
-                                        IsEnabled="{Binding CanSend}" />
-                                <Button Content="右 → 左 发送"
-                                        Click="SendRightToLeft_Click"
-                                        IsEnabled="{Binding CanSend}" />
-                            </WrapPanel>
+                            <Grid Grid.Row="3" Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="{Binding LastTransferSummary, StringFormat=最近成功发送：{0}}" />
+                                    <TextBlock Margin="0,6,0,0"
+                                               Foreground="{DynamicResource DangerBrush}"
+                                               Text="{Binding LastTransferFailure, StringFormat=最近失败：{0}}" />
+                                    <TextBlock Margin="0,6,0,0"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="{Binding SelectedSessionLastError, StringFormat=会话最近错误：{0}}" />
+                                </StackPanel>
+                                <WrapPanel Grid.Column="1"
+                                           HorizontalAlignment="Right">
+                                    <Button Margin="0,0,10,0"
+                                            Content="左 → 右 发送"
+                                            Click="SendLeftToRight_Click"
+                                            IsEnabled="{Binding CanSend}" />
+                                    <Button Content="右 → 左 发送"
+                                            Click="SendRightToLeft_Click"
+                                            IsEnabled="{Binding CanSend}" />
+                                </WrapPanel>
+                            </Grid>
                         </Grid>
                     </Border>
-                </Grid>
+                </StackPanel>
             </ScrollViewer>
 
             <ScrollViewer Grid.Column="2"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
+                <StackPanel>
+                    <Expander Header="新建会话"
+                              IsExpanded="{Binding IsLaunchPanelExpanded}">
+                        <Border Margin="0,8,0,14"
+                                Style="{DynamicResource CardBorderStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="96" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
 
-                    <Border Style="{DynamicResource CardBorderStyle}">
-                        <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="96" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
+                                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="目录" />
+                                <Grid Grid.Column="1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding WorkingDirectory, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Grid.Column="1"
+                                            Margin="10,0,0,0"
+                                            Content="浏览"
+                                            Click="BrowseWorkingDirectory_Click"
+                                            IsEnabled="{Binding CanStart}" />
+                                </Grid>
 
-                        <TextBlock Grid.Row="0"
-                                   Grid.ColumnSpan="2"
-                                   Margin="0,0,0,12"
-                                   FontSize="18"
-                                   FontWeight="SemiBold"
-                                   Text="新建会话" />
+                                <TextBlock Grid.Row="1"
+                                           Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="工作区" />
+                                <TextBox Grid.Row="1"
+                                         Grid.Column="1"
+                                         Margin="0,12,0,0"
+                                         Text="{Binding WorkspaceName, UpdateSourceTrigger=PropertyChanged}" />
 
-                        <TextBlock Grid.Row="1"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="目录" />
-                        <Grid Grid.Row="1"
-                              Grid.Column="1">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox MinWidth="0"
-                                     Text="{Binding WorkingDirectory, UpdateSourceTrigger=PropertyChanged}" />
-                            <Button Grid.Column="1"
-                                    Margin="10,0,0,0"
-                                    Content="浏览"
-                                    Click="BrowseWorkingDirectory_Click"
-                                    IsEnabled="{Binding CanStart}" />
-                        </Grid>
+                                <TextBlock Grid.Row="2"
+                                           Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="分组" />
+                                <TextBox Grid.Row="2"
+                                         Grid.Column="1"
+                                         Margin="0,12,0,0"
+                                         Text="{Binding SessionGroupName, UpdateSourceTrigger=PropertyChanged}" />
 
-                        <TextBlock Grid.Row="2"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="工作区" />
-                        <TextBox Grid.Row="2"
-                                 Grid.Column="1"
-                                 Margin="0,12,0,0"
-                                 Text="{Binding WorkspaceName, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Row="3"
+                                           Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="Claude" />
+                                <ComboBox Grid.Row="3"
+                                          Grid.Column="1"
+                                          Margin="0,12,0,0"
+                                          SelectedValuePath="Value"
+                                          DisplayMemberPath="Label"
+                                          ItemsSource="{Binding ClaudeModeOptions}"
+                                          SelectedValue="{Binding ClaudePermissionMode, UpdateSourceTrigger=PropertyChanged}"
+                                          IsEnabled="{Binding AreModeSelectorsEnabled}" />
 
-                        <TextBlock Grid.Row="3"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="Claude" />
-                        <ComboBox Grid.Row="3"
-                                  Grid.Column="1"
-                                  Margin="0,12,0,0"
-                                  SelectedValuePath="Value"
-                                  DisplayMemberPath="Label"
-                                  ItemsSource="{Binding ClaudeModeOptions}"
-                                  SelectedValue="{Binding ClaudePermissionMode, UpdateSourceTrigger=PropertyChanged}"
-                                  IsEnabled="{Binding AreModeSelectorsEnabled}" />
+                                <TextBlock Grid.Row="4"
+                                           Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="Codex" />
+                                <ComboBox Grid.Row="4"
+                                          Grid.Column="1"
+                                          Margin="0,12,0,0"
+                                          SelectedValuePath="Value"
+                                          DisplayMemberPath="Label"
+                                          ItemsSource="{Binding CodexModeOptions}"
+                                          SelectedValue="{Binding CodexMode, UpdateSourceTrigger=PropertyChanged}"
+                                          IsEnabled="{Binding AreModeSelectorsEnabled}" />
 
-                        <TextBlock Grid.Row="4"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="Codex" />
-                        <ComboBox Grid.Row="4"
-                                  Grid.Column="1"
-                                  Margin="0,12,0,0"
-                                  SelectedValuePath="Value"
-                                  DisplayMemberPath="Label"
-                                  ItemsSource="{Binding CodexModeOptions}"
-                                  SelectedValue="{Binding CodexMode, UpdateSourceTrigger=PropertyChanged}"
-                                  IsEnabled="{Binding AreModeSelectorsEnabled}" />
+                                <TextBlock Grid.Row="5"
+                                           Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="右侧宽度" />
+                                <StackPanel Grid.Row="5"
+                                            Grid.Column="1"
+                                            Margin="0,12,0,0"
+                                            Orientation="Horizontal">
+                                    <Slider Width="180"
+                                            Minimum="10"
+                                            Maximum="90"
+                                            TickFrequency="5"
+                                            IsSnapToTickEnabled="True"
+                                            Value="{Binding RightPanePercent, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Margin="12,0,0,0"
+                                               VerticalAlignment="Center"
+                                               Text="{Binding RightPanePercent, StringFormat={}{0}%}" />
+                                </StackPanel>
 
-                        <TextBlock Grid.Row="5"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="右侧宽度" />
-                        <StackPanel Grid.Row="5"
-                                    Grid.Column="1"
-                                    Margin="0,12,0,0"
-                                    Orientation="Horizontal">
-                            <Slider Width="180"
-                                    Minimum="10"
-                                    Maximum="90"
-                                    TickFrequency="5"
-                                    IsSnapToTickEnabled="True"
-                                    Value="{Binding RightPanePercent, UpdateSourceTrigger=PropertyChanged}" />
-                            <TextBlock Margin="12,0,0,0"
-                                       VerticalAlignment="Center"
-                                       Text="{Binding RightPanePercent, StringFormat={}{0}%}" />
-                        </StackPanel>
+                                <TextBlock Grid.Row="6"
+                                           Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="模板" />
+                                <Grid Grid.Row="6"
+                                      Grid.Column="1"
+                                      Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox SelectedValuePath="ProfileId"
+                                              DisplayMemberPath="Name"
+                                              ItemsSource="{Binding LaunchProfiles}"
+                                              SelectedValue="{Binding SelectedLaunchProfileId, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Grid.Column="1"
+                                            Margin="10,0,0,0"
+                                            Content="套用"
+                                            Click="ApplyLaunchProfile_Click"
+                                            IsEnabled="{Binding CanApplyLaunchProfile}" />
+                                </Grid>
 
-                        <TextBlock Grid.Row="6"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="Launch Profile" />
-                        <Grid Grid.Row="6"
-                              Grid.Column="1"
-                              Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <ComboBox SelectedValuePath="ProfileId"
-                                      DisplayMemberPath="Name"
-                                      ItemsSource="{Binding LaunchProfiles}"
-                                      SelectedValue="{Binding SelectedLaunchProfileId, UpdateSourceTrigger=PropertyChanged}" />
-                            <Button Grid.Column="1"
-                                    Margin="10,0,0,0"
-                                    Content="套用"
-                                    Click="ApplyLaunchProfile_Click"
-                                    IsEnabled="{Binding CanApplyLaunchProfile}" />
-                        </Grid>
-
-                        <TextBlock Grid.Row="7"
-                                   Grid.ColumnSpan="2"
-                                   Margin="0,8,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="{Binding LaunchProfileSummary}" />
-
-                        <TextBlock Grid.Row="8"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="保存模板" />
-                        <Grid Grid.Row="8"
-                              Grid.Column="1"
-                              Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox Text="{Binding NewLaunchProfileName, UpdateSourceTrigger=PropertyChanged}" />
-                            <Button Grid.Column="1"
-                                    Margin="10,0,0,0"
-                                    Content="保存"
-                                    Click="SaveLaunchProfile_Click"
-                                    IsEnabled="{Binding CanSaveLaunchProfile}" />
-                        </Grid>
-
-                        <TextBlock Grid.Row="9"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="worktree" />
-                        <StackPanel Grid.Row="9"
-                                    Grid.Column="1"
-                                    Margin="0,12,0,0">
-                            <CheckBox IsChecked="{Binding UseWorktree}"
-                                      Content="为新会话创建独立 worktree" />
-                            <ComboBox Margin="0,8,0,0"
-                                      SelectedValuePath="Value"
-                                      DisplayMemberPath="Label"
-                                      ItemsSource="{Binding WorktreeStrategyOptions}"
-                                      SelectedValue="{Binding WorktreeStrategy, UpdateSourceTrigger=PropertyChanged}" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="10"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="自动模式" />
-                        <StackPanel Grid.Row="10"
-                                    Grid.Column="1"
-                                    Margin="0,12,0,0">
-                            <CheckBox IsChecked="{Binding AutoModeEnabled}"
-                                      Content="启动即进入自动编排" />
-                            <TextBlock Margin="0,6,0,0"
-                                       Foreground="{DynamicResource TextSecondaryBrush}"
-                                       Text="{Binding ModeLockHint}" />
-                        </StackPanel>
-
-                        <Button Grid.Row="11"
-                                Grid.ColumnSpan="2"
-                                Margin="0,14,0,0"
-                                Content="启动 Ai Pair"
-                                Click="StartSession_Click"
-                                IsEnabled="{Binding CanStart}" />
-                        </Grid>
-                    </Border>
-
-                    <Border Grid.Row="1"
-                            Margin="0,14,0,14"
-                            Style="{DynamicResource CardBorderStyle}">
-                        <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock FontSize="18"
-                                       FontWeight="SemiBold"
-                                       Text="自动编排" />
-                            <Button Margin="12,0,0,0"
-                                    Content="启动"
-                                    Click="StartAutomation_Click"
-                                    IsEnabled="{Binding CanStartAutomation}" />
-                            <Button Margin="10,0,0,0"
-                                    Content="停止"
-                                    Click="StopAutomation_Click"
-                                    IsEnabled="{Binding CanStopAutomation}" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="1"
-                                   Margin="0,10,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="{Binding AutomationStatusDetail}" />
-
-                        <TextBlock Grid.Row="2"
-                                   Margin="0,10,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="任务目标" />
-                        <TextBox Grid.Row="3"
-                                 MinHeight="80"
-                                 AcceptsReturn="True"
-                                 TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 Text="{Binding AutomationTaskPrompt, UpdateSourceTrigger=PropertyChanged}" />
-
-                        <Grid Grid.Row="4" Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-
-                            <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="推进策略" />
-                            <ComboBox Grid.Row="1"
-                                      Margin="0,6,10,0"
-                                      SelectedValuePath="Value"
-                                      DisplayMemberPath="Label"
-                                      ItemsSource="{Binding AutomationAdvancePolicyOptions}"
-                                      SelectedValue="{Binding SelectedAutomationAdvancePolicyKey, UpdateSourceTrigger=PropertyChanged}" />
-
-                            <TextBlock Grid.Column="1"
-                                       Foreground="{DynamicResource TextSecondaryBrush}"
-                                       Text="轮询(ms)" />
-                            <TextBox Grid.Row="1"
-                                     Grid.Column="1"
-                                     Margin="0,6,0,0"
-                                     Text="{Binding AutomationPollIntervalMilliseconds, UpdateSourceTrigger=PropertyChanged}" />
-
-                            <TextBlock Grid.Row="2"
-                                       Foreground="{DynamicResource TextSecondaryBrush}"
-                                       Text="{Binding AutomationUpdatedAt, StringFormat=最近更新 {0}}" />
-                            <TextBlock Grid.Row="2"
-                                       Grid.Column="1"
-                                       Foreground="{DynamicResource TextSecondaryBrush}"
-                                       Text="{Binding AutomationInterventionReason}" />
-                        </Grid>
-
-                        <TextBlock Grid.Row="5"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="待审批计划" />
-                        <Border Grid.Row="6"
-                                Margin="0,6,0,0"
-                                Padding="12"
-                                CornerRadius="12"
-                                Background="{DynamicResource InsetBackgroundBrush}"
-                                BorderBrush="{DynamicResource BorderBrushSoft}"
-                                BorderThickness="1">
-                            <StackPanel>
-                                <TextBlock FontWeight="SemiBold" Text="{Binding PendingApprovalStage}" />
-                                <TextBlock Margin="0,6,0,0" Text="{Binding PendingApprovalTitle}" />
-                                <TextBlock Margin="0,6,0,0"
+                                <TextBlock Grid.Row="7"
+                                           Grid.ColumnSpan="2"
+                                           Margin="0,8,0,0"
                                            Foreground="{DynamicResource TextSecondaryBrush}"
                                            TextWrapping="Wrap"
-                                           Text="{Binding PendingApprovalSummary}" />
-                            </StackPanel>
+                                           Text="{Binding LaunchProfileSummary}" />
+
+                                <TextBlock Grid.Row="8"
+                                           Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="面板预设" />
+                                <ComboBox Grid.Row="8"
+                                          Grid.Column="1"
+                                          Margin="0,12,0,0"
+                                          SelectedValuePath="Value"
+                                          DisplayMemberPath="Label"
+                                          ItemsSource="{Binding PanelPresetOptions}"
+                                          SelectedValue="{Binding PanelPreset, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <Border Grid.Row="9"
+                                        Grid.ColumnSpan="2"
+                                        Margin="0,14,0,0"
+                                        Padding="12"
+                                        CornerRadius="12"
+                                        Background="{DynamicResource InsetBackgroundBrush}"
+                                        BorderBrush="{DynamicResource BorderBrushSoft}"
+                                        BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="保存当前配置为模板" />
+                                        <Grid Margin="0,8,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Text="{Binding NewLaunchProfileName, UpdateSourceTrigger=PropertyChanged}" />
+                                            <Button Grid.Column="1"
+                                                    Margin="10,0,0,0"
+                                                    Content="保存"
+                                                    Click="SaveLaunchProfile_Click"
+                                                    IsEnabled="{Binding CanSaveLaunchProfile}" />
+                                        </Grid>
+
+                                        <StackPanel Margin="0,12,0,0">
+                                            <CheckBox IsChecked="{Binding UseWorktree}"
+                                                      Content="为新会话创建独立 worktree" />
+                                            <ComboBox Margin="0,8,0,0"
+                                                      SelectedValuePath="Value"
+                                                      DisplayMemberPath="Label"
+                                                      ItemsSource="{Binding WorktreeStrategyOptions}"
+                                                      SelectedValue="{Binding WorktreeStrategy, UpdateSourceTrigger=PropertyChanged}" />
+                                        </StackPanel>
+
+                                        <StackPanel Margin="0,12,0,0">
+                                            <CheckBox IsChecked="{Binding AutoModeEnabled}"
+                                                      Content="启动即进入自动编排" />
+                                            <TextBlock Margin="0,6,0,0"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                                       TextWrapping="Wrap"
+                                                       Text="{Binding ModeLockHint}" />
+                                        </StackPanel>
+
+                                        <Button Margin="0,12,0,0"
+                                                Content="启动 Ai Pair"
+                                                Click="StartSession_Click"
+                                                IsEnabled="{Binding CanStart}" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
                         </Border>
+                    </Expander>
 
-                        <TextBlock Grid.Row="7"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="审批备注" />
-                        <TextBox Grid.Row="8"
-                                 MinHeight="70"
-                                 AcceptsReturn="True"
-                                 TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 Text="{Binding ApprovalNote, UpdateSourceTrigger=PropertyChanged}" />
+                    <Expander Header="自动编排"
+                              IsExpanded="{Binding IsAutomationPanelExpanded}">
+                        <Border Margin="0,8,0,14"
+                                Style="{DynamicResource CardBorderStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
 
-                        <StackPanel Grid.Row="9"
-                                    Margin="0,12,0,0"
-                                    Orientation="Horizontal">
-                            <Button Content="批准并发送"
-                                    Click="ApprovePlan_Click"
-                                    IsEnabled="{Binding CanApproveAutomation}" />
-                            <Button Margin="10,0,0,0"
-                                    Content="退回重拟"
-                                    Click="RejectPlan_Click"
-                                    IsEnabled="{Binding CanRejectAutomation}" />
-                        </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock FontSize="18"
+                                               FontWeight="SemiBold"
+                                               Text="自动编排过程视图" />
+                                    <Button Margin="12,0,0,0"
+                                            Content="启动"
+                                            Click="StartAutomation_Click"
+                                            IsEnabled="{Binding CanStartAutomation}" />
+                                    <Button Margin="10,0,0,0"
+                                            Content="停止"
+                                            Click="StopAutomation_Click"
+                                            IsEnabled="{Binding CanStopAutomation}" />
+                                </StackPanel>
 
-                        <TextBlock Grid.Row="10"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource DangerBrush}"
-                                   TextWrapping="Wrap"
-                                   Text="{Binding AutomationLastError}" />
-                        </Grid>
-                    </Border>
+                                <TextBlock Grid.Row="1"
+                                           Margin="0,10,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding AutomationStatusDetail}" />
 
-                    <Border Grid.Row="2"
-                            Style="{DynamicResource CardBorderStyle}">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
-                            <TextBlock FontSize="18"
-                                       FontWeight="SemiBold"
-                                       Text="依赖摘要" />
-                            <DataGrid Grid.Row="1"
-                                      Margin="0,12,0,0"
-                                      Height="220"
-                                      ItemsSource="{Binding Dependencies}"
-                                      AutoGenerateColumns="False"
-                                      IsReadOnly="True"
-                                      CanUserResizeRows="False">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="组件" Binding="{Binding Name}" Width="90" />
-                                    <DataGridTextColumn Header="版本" Binding="{Binding Version}" Width="140" />
-                                    <DataGridTemplateColumn Header="提示" Width="220">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock TextWrapping="Wrap"
-                                                           Text="{Binding Message}"
-                                                           ToolTip="{Binding Message}" />
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                </DataGrid.Columns>
-                            </DataGrid>
-                        </Grid>
-                    </Border>
-                </Grid>
+                                <TextBox Grid.Row="2"
+                                         Margin="0,12,0,0"
+                                         MinHeight="88"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Text="{Binding AutomationTaskPrompt, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <UniformGrid Grid.Row="3"
+                                             Margin="0,12,0,0"
+                                             Columns="2">
+                                    <StackPanel Margin="0,0,10,10">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="推进策略" />
+                                        <ComboBox Margin="0,6,0,0"
+                                                  SelectedValuePath="Value"
+                                                  DisplayMemberPath="Label"
+                                                  ItemsSource="{Binding AutomationAdvancePolicyOptions}"
+                                                  SelectedValue="{Binding SelectedAutomationAdvancePolicyKey, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="轮询(ms)" />
+                                        <TextBox Margin="0,6,0,0"
+                                                 Text="{Binding AutomationPollIntervalMilliseconds, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,10,10">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="无进展超时(s)" />
+                                        <TextBox Margin="0,6,0,0"
+                                                 Text="{Binding AutomationTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="抓取行数" />
+                                        <TextBox Margin="0,6,0,0"
+                                                 Text="{Binding AutomationCaptureLines, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,10,0">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="最大自动阶段数" />
+                                        <TextBox Margin="0,6,0,0"
+                                                 Text="{Binding AutomationMaxAutoStages, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="单阶段最大重试" />
+                                        <TextBox Margin="0,6,0,0"
+                                                 Text="{Binding AutomationMaxRetryPerStage, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </UniformGrid>
+
+                                <Border Grid.Row="4"
+                                        Margin="0,12,0,0"
+                                        Padding="12"
+                                        CornerRadius="12"
+                                        Background="{DynamicResource InsetBackgroundBrush}"
+                                        BorderBrush="{DynamicResource BorderBrushSoft}"
+                                        BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold"
+                                                   Text="{Binding PendingApprovalStage}" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   Text="{Binding PendingApprovalTitle}" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding PendingApprovalSummary}" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding AutomationInterventionReason}" />
+                                    </StackPanel>
+                                </Border>
+
+                                <TextBox Grid.Row="5"
+                                         Margin="0,12,0,0"
+                                         MinHeight="76"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Text="{Binding ApprovalNote, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <WrapPanel Grid.Row="6"
+                                           Margin="0,12,0,0">
+                                    <Button Margin="0,0,10,0"
+                                            Content="批准并发送"
+                                            Click="ApprovePlan_Click"
+                                            IsEnabled="{Binding CanApproveAutomation}" />
+                                    <Button Content="退回重拟"
+                                            Click="RejectPlan_Click"
+                                            IsEnabled="{Binding CanRejectAutomation}" />
+                                </WrapPanel>
+
+                                <Border Grid.Row="7"
+                                        Margin="0,14,0,0"
+                                        Padding="12"
+                                        CornerRadius="12"
+                                        Background="{DynamicResource InsetBackgroundBrush}"
+                                        BorderBrush="{DynamicResource BorderBrushSoft}"
+                                        BorderThickness="1">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock FontWeight="SemiBold" Text="阶段历史" />
+                                        <ListBox Grid.Row="1"
+                                                 Margin="0,8,0,0"
+                                                 Height="220"
+                                                 ItemsSource="{Binding AutomationHistory}">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Margin="0,0,0,8"
+                                                            Padding="10"
+                                                            CornerRadius="10"
+                                                            Background="{DynamicResource CardBackgroundBrush}"
+                                                            BorderBrush="{DynamicResource BorderBrushSoft}"
+                                                            BorderThickness="1">
+                                                        <StackPanel>
+                                                            <DockPanel>
+                                                                <TextBlock FontWeight="SemiBold"
+                                                                           Text="{Binding DisplayStage}" />
+                                                                <TextBlock DockPanel.Dock="Right"
+                                                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                                                           Text="{Binding OccurredAt, StringFormat=HH:mm:ss}" />
+                                                            </DockPanel>
+                                                            <TextBlock Margin="0,4,0,0"
+                                                                       Foreground="{DynamicResource AccentBrush}"
+                                                                       Text="{Binding SeverityLabel}" />
+                                                            <TextBlock Margin="0,4,0,0"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="{Binding StatusDetail}" />
+                                                            <TextBlock Margin="0,4,0,0"
+                                                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="{Binding LastPacketSummary}" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </Expander>
+
+                    <Expander Header="依赖与环境"
+                              IsExpanded="{Binding IsEnvironmentPanelExpanded}">
+                        <Border Margin="0,8,0,0"
+                                Style="{DynamicResource CardBorderStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock FontSize="18"
+                                           FontWeight="SemiBold"
+                                           Text="依赖摘要" />
+                                <DataGrid Grid.Row="1"
+                                          Margin="0,12,0,0"
+                                          Height="260"
+                                          ItemsSource="{Binding Dependencies}"
+                                          AutoGenerateColumns="False"
+                                          IsReadOnly="True"
+                                          CanUserResizeRows="False">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="组件" Binding="{Binding Name}" Width="90" />
+                                        <DataGridTextColumn Header="版本" Binding="{Binding Version}" Width="120" />
+                                        <DataGridTemplateColumn Header="提示" Width="220">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock TextWrapping="Wrap"
+                                                               Text="{Binding Message}"
+                                                               ToolTip="{Binding Message}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
+                        </Border>
+                    </Expander>
+                </StackPanel>
             </ScrollViewer>
         </Grid>
 
-        <Border Grid.Row="2"
+        <Border Grid.Row="3"
                 Style="{DynamicResource CardBorderStyle}">
             <Grid>
                 <Grid.RowDefinitions>
@@ -717,14 +1014,23 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="3"
+        <Border Grid.Row="4"
                 Padding="12,10"
                 CornerRadius="14"
                 Background="{DynamicResource CardBackgroundBrush}"
                 BorderBrush="{DynamicResource BorderBrushSoft}"
                 BorderThickness="1">
-            <TextBlock Foreground="{DynamicResource TextSecondaryBrush}"
-                       Text="{Binding FooterMessage}" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Foreground="{DynamicResource TextSecondaryBrush}"
+                           Text="{Binding FooterMessage}" />
+                <TextBlock Grid.Column="1"
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           Text="{Binding AppVersionText}" />
+            </Grid>
         </Border>
     </Grid>
 </Window>

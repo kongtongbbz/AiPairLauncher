@@ -12,6 +12,12 @@ public sealed class LaunchProfile
 
     public string? WorkspacePrefix { get; init; }
 
+    public string DefaultGroupName { get; init; } = "默认";
+
+    public string TransferInstructionTemplate { get; init; } = "请基于下面这段终端输出继续处理。先给出结论，再给出下一步动作。";
+
+    public string DefaultPanelPreset { get; init; } = "balanced";
+
     public string ClaudePermissionMode { get; init; } = "default";
 
     public string CodexMode { get; init; } = "standard";

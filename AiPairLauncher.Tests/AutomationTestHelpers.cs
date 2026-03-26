@@ -23,6 +23,10 @@ internal sealed class FakeWezTermService : IWezTermService
 
     public WorktreeLaunchContext? WorktreeLaunchContextOverride { get; set; }
 
+    public WorktreeMaintenanceResult? WorktreeMaintenanceResultOverride { get; set; }
+
+    public IReadOnlyList<string> CleanupOrphanedWorktreesResult { get; set; } = [];
+
     public LaunchRequest? LastLaunchRequest { get; private set; }
 
     public void SetPaneText(int paneId, string text)
@@ -110,6 +114,27 @@ internal sealed class FakeWezTermService : IWezTermService
             WorktreeStrategy = request.WorktreeStrategy,
             Summary = "未启用 worktree，继续使用原目录启动。",
         });
+    }
+
+    public Task<WorktreeMaintenanceResult> CleanupWorktreeAsync(string workingDirectory, CancellationToken cancellationToken = default)
+    {
+        if (WorktreeMaintenanceResultOverride is not null)
+        {
+            return Task.FromResult(WorktreeMaintenanceResultOverride);
+        }
+
+        return Task.FromResult(new WorktreeMaintenanceResult
+        {
+            Success = true,
+            Summary = "worktree 已清理",
+            WorkingDirectory = workingDirectory,
+            WorktreeRemoved = true,
+        });
+    }
+
+    public Task<IReadOnlyList<string>> CleanupOrphanedWorktreesAsync(string workingDirectory, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(CleanupOrphanedWorktreesResult);
     }
 
     public Task<string> ReadPaneTextAsync(LauncherSession session, int paneId, int lastLines, CancellationToken cancellationToken = default)

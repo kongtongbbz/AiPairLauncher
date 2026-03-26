@@ -14,6 +14,10 @@ public sealed class SessionStatusSnapshot
 
     public string LastSummary { get; set; } = "暂无";
 
+    public string ClaudePreview { get; set; } = "暂无输出";
+
+    public string CodexPreview { get; set; } = "暂无输出";
+
     public bool NeedsApproval { get; set; }
 
     public int? AutomationStageId { get; set; }
@@ -32,6 +36,8 @@ public sealed class SessionStatusSnapshot
             LastActivityAt = LastActivityAt,
             LastError = LastError,
             LastSummary = LastSummary,
+            ClaudePreview = ClaudePreview,
+            CodexPreview = CodexPreview,
             NeedsApproval = NeedsApproval,
             AutomationStageId = AutomationStageId,
             AutomationRetryCount = AutomationRetryCount,

@@ -94,6 +94,50 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         }
     }
 
+    public async Task RestoreAsync(
+        LauncherSession session,
+        AutomationSettings settings,
+        AutomationRunState state,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(state);
+        ValidateSettings(settings);
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_loopTask is { IsCompleted: false })
+            {
+                return;
+            }
+
+            _session = session;
+            _settings = settings;
+            _state = state;
+            _lastProgressAt = state.UpdatedAt == default ? DateTimeOffset.Now : state.UpdatedAt;
+            _autoApprovedStageCount = state.AutoApprovedStageCount;
+            _currentStageRetryCount = state.CurrentStageRetryCount;
+            _currentPollingRound = 0;
+            _isFirstStageManualGateSatisfied = settings.AdvancePolicy != AutomationAdvancePolicy.ManualFirstStageThenAuto
+                || state.AutoAdvanceEnabled;
+            _forceManualApprovalForNextStagePlan = false;
+            _loopCts = new CancellationTokenSource();
+
+            if (state.IsActive && !state.HasPendingApproval)
+            {
+                _loopTask = Task.Run(() => PollLoopAsync(_loopCts.Token), CancellationToken.None);
+            }
+
+            StateChanged?.Invoke(this, _state);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task ApproveAsync(string? userNote, CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);

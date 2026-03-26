@@ -24,6 +24,7 @@ Quick safety check:
 
         Assert.Single(refreshed);
         Assert.Equal(SessionHealthStatus.Waiting, refreshed[0].HealthStatus);
+        Assert.Contains("Quick safety check", refreshed[0].StatusSnapshot.ClaudePreview);
         Assert.Single(notificationService.Messages);
     }
 

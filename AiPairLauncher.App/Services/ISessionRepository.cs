@@ -14,6 +14,12 @@ public interface ISessionRepository
 
     Task UpsertAsync(ManagedSessionRecord sessionRecord, CancellationToken cancellationToken = default);
 
+    Task RenameSessionAsync(string sessionId, string displayName, CancellationToken cancellationToken = default);
+
+    Task SetPinnedAsync(string sessionId, bool isPinned, CancellationToken cancellationToken = default);
+
+    Task MoveToGroupAsync(string sessionId, string groupName, CancellationToken cancellationToken = default);
+
     Task ArchiveAsync(string sessionId, CancellationToken cancellationToken = default);
 
     Task RestoreAsync(string sessionId, CancellationToken cancellationToken = default);
@@ -39,6 +45,18 @@ public interface ISessionRepository
     Task SaveLaunchProfileAsync(LaunchProfile launchProfile, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<LaunchProfile>> ListProfilesAsync(CancellationToken cancellationToken = default);
+
+    Task<LaunchProfile?> DuplicateSessionConfigAsync(string sessionId, string profileName, CancellationToken cancellationToken = default);
+
+    Task SaveAutomationEventAsync(AutomationEventRecord eventRecord, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<AutomationEventRecord>> ListAutomationEventsAsync(string sessionId, int take = 20, CancellationToken cancellationToken = default);
+
+    Task SaveAutomationSnapshotAsync(PersistedAutomationSnapshot snapshot, CancellationToken cancellationToken = default);
+
+    Task<PersistedAutomationSnapshot?> GetAutomationSnapshotAsync(string sessionId, CancellationToken cancellationToken = default);
+
+    Task ClearAutomationSnapshotAsync(string sessionId, CancellationToken cancellationToken = default);
 
     Task ClearAllAsync(CancellationToken cancellationToken = default);
 }

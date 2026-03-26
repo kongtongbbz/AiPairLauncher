@@ -61,6 +61,9 @@ public sealed class SessionMonitorService : ISessionMonitorService
                 .ReadPaneTextAsync(record.Session, record.Session.RightPaneId, 40, cancellationToken)
                 .ConfigureAwait(false);
 
+            record.StatusSnapshot.ClaudePreview = BuildPreview(claudeText);
+            record.StatusSnapshot.CodexPreview = BuildPreview(codexText);
+
             record.RuntimeBinding = new SessionRuntimeBinding
             {
                 SessionId = record.SessionId,
@@ -132,6 +135,9 @@ public sealed class SessionMonitorService : ISessionMonitorService
         record.StatusSnapshot.NeedsApproval = state.PendingApproval is not null;
         record.StatusSnapshot.AutomationStageId = state.CurrentStageId;
         record.StatusSnapshot.AutomationRetryCount = state.CurrentStageRetryCount;
+        record.StatusSnapshot.ClaudePreview = state.PendingApproval is null
+            ? record.StatusSnapshot.ClaudePreview
+            : BuildApprovalPreview(state.PendingApproval);
 
         switch (state.Status)
         {
@@ -205,5 +211,28 @@ public sealed class SessionMonitorService : ISessionMonitorService
         return text
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .FirstOrDefault(static line => !string.IsNullOrWhiteSpace(line));
+    }
+
+    private static string BuildPreview(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "暂无输出";
+        }
+
+        var lines = text
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static line => !string.IsNullOrWhiteSpace(line))
+            .TakeLast(3)
+            .ToArray();
+
+        return lines.Length == 0 ? "暂无输出" : string.Join(Environment.NewLine, lines);
+    }
+
+    private static string BuildApprovalPreview(ApprovalDraft approvalDraft)
+    {
+        var title = string.IsNullOrWhiteSpace(approvalDraft.Title) ? "待审批计划" : approvalDraft.Title.Trim();
+        var summary = string.IsNullOrWhiteSpace(approvalDraft.Summary) ? "等待人工确认" : approvalDraft.Summary.Trim();
+        return $"{title}{Environment.NewLine}{summary}";
     }
 }

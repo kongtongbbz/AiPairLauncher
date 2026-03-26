@@ -99,6 +99,9 @@ public sealed class SessionStoreTests : IDisposable
         {
             Name = "自动闭环",
             Description = "测试模板",
+            DefaultGroupName = "实验组",
+            TransferInstructionTemplate = "继续执行并总结。",
+            DefaultPanelPreset = "automation",
             ClaudePermissionMode = "plan",
             CodexMode = "full-auto",
             AutomationEnabled = true,
@@ -109,7 +112,84 @@ public sealed class SessionStoreTests : IDisposable
 
         var profiles = await store.ListProfilesAsync();
 
-        Assert.Contains(profiles, item => item.ProfileId == profile.ProfileId && item.WorktreeStrategy == "subdirectory");
+        Assert.Contains(
+            profiles,
+            item => item.ProfileId == profile.ProfileId
+                && item.WorktreeStrategy == "subdirectory"
+                && item.DefaultGroupName == "实验组"
+                && item.TransferInstructionTemplate == "继续执行并总结。"
+                && item.DefaultPanelPreset == "automation");
+    }
+
+    [Fact(DisplayName = "test_session_metadata_operations_persist_group_pin_and_name")]
+    public async Task SessionMetadataOperationsPersistGroupPinAndNameAsync()
+    {
+        var store = new SessionStore(_appDataPath);
+        var session = CreateSession("workspace-meta");
+
+        await store.SaveAsync(session);
+        await store.RenameSessionAsync(session.SessionId, "新会话名称");
+        await store.MoveToGroupAsync(session.SessionId, "研究组");
+        await store.SetPinnedAsync(session.SessionId, true);
+
+        var record = await store.GetAsync(session.SessionId);
+
+        Assert.NotNull(record);
+        Assert.Equal("新会话名称", record!.DisplayName);
+        Assert.Equal("研究组", record.GroupName);
+        Assert.True(record.IsPinned);
+    }
+
+    [Fact(DisplayName = "test_automation_snapshot_and_events_are_persisted")]
+    public async Task AutomationSnapshotAndEventsArePersistedAsync()
+    {
+        var store = new SessionStore(_appDataPath);
+        var session = CreateSession("workspace-automation");
+        await store.SaveAsync(session);
+
+        var snapshot = new PersistedAutomationSnapshot
+        {
+            SessionId = session.SessionId,
+            Settings = new AutomationSettings
+            {
+                InitialTaskPrompt = "请推进实现并验证。",
+                AdvancePolicy = AutomationAdvancePolicy.FullAutoLoop,
+            },
+            State = new AutomationRunState
+            {
+                Status = AutomationStageStatus.PendingUserApproval,
+                CurrentStageId = 2,
+                StatusDetail = "等待人工审批",
+                LastPacketSummary = "阶段二计划已生成",
+                PendingApproval = new ApprovalDraft
+                {
+                    StageId = 2,
+                    Title = "阶段二",
+                    Summary = "补齐验证",
+                    Scope = "仅测试",
+                    CodexBrief = "执行验证",
+                },
+            },
+        };
+
+        await store.SaveAutomationSnapshotAsync(snapshot);
+        await store.SaveAutomationEventAsync(new AutomationEventRecord
+        {
+            SessionId = session.SessionId,
+            Status = AutomationStageStatus.PendingUserApproval,
+            StageId = 2,
+            StatusDetail = "等待人工审批",
+            LastPacketSummary = "阶段二计划已生成",
+        });
+
+        var loadedSnapshot = await store.GetAutomationSnapshotAsync(session.SessionId);
+        var events = await store.ListAutomationEventsAsync(session.SessionId);
+
+        Assert.NotNull(loadedSnapshot);
+        Assert.Equal(AutomationStageStatus.PendingUserApproval, loadedSnapshot!.State.Status);
+        Assert.Equal(2, loadedSnapshot.State.CurrentStageId);
+        Assert.Single(events);
+        Assert.Equal("阶段二计划已生成", events[0].LastPacketSummary);
     }
 
     [Fact(DisplayName = "test_builtin_launch_profiles_are_listed_in_selector")]

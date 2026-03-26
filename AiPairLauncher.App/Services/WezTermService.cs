@@ -240,6 +240,7 @@ public sealed class WezTermService : IWezTermService
         {
             return new WorktreeLaunchContext
             {
+                GitRoot = request.WorkingDirectory,
                 WorkingDirectory = request.WorkingDirectory,
                 UsedWorktree = false,
                 WorktreeStrategy = "none",
@@ -252,6 +253,7 @@ public sealed class WezTermService : IWezTermService
         {
             return new WorktreeLaunchContext
             {
+                GitRoot = request.WorkingDirectory,
                 WorkingDirectory = request.WorkingDirectory,
                 UsedWorktree = false,
                 WorktreeStrategy = request.WorktreeStrategy,
@@ -264,6 +266,7 @@ public sealed class WezTermService : IWezTermService
         {
             return new WorktreeLaunchContext
             {
+                GitRoot = request.WorkingDirectory,
                 WorkingDirectory = request.WorkingDirectory,
                 UsedWorktree = false,
                 WorktreeStrategy = request.WorktreeStrategy,
@@ -303,6 +306,7 @@ public sealed class WezTermService : IWezTermService
         {
             return new WorktreeLaunchContext
             {
+                GitRoot = gitRoot,
                 WorkingDirectory = request.WorkingDirectory,
                 UsedWorktree = false,
                 WorktreeStrategy = request.WorktreeStrategy,
@@ -315,12 +319,169 @@ public sealed class WezTermService : IWezTermService
 
         return new WorktreeLaunchContext
         {
+            GitRoot = gitRoot,
             WorkingDirectory = worktreeDirectory,
             UsedWorktree = true,
             WorktreeStrategy = request.WorktreeStrategy,
             BranchName = branchName,
             Summary = $"已创建 worktree：{branchName}",
         };
+    }
+
+    public async Task<WorktreeMaintenanceResult> CleanupWorktreeAsync(string workingDirectory, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workingDirectory);
+
+        var gitPath = ResolveGitPath();
+        if (gitPath is null)
+        {
+            return new WorktreeMaintenanceResult
+            {
+                Success = false,
+                WorkingDirectory = workingDirectory,
+                Summary = "未找到 git，无法清理 worktree。",
+            };
+        }
+
+        var gitRoot = await TryResolveGitRootAsync(gitPath, workingDirectory, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(gitRoot))
+        {
+            return new WorktreeMaintenanceResult
+            {
+                Success = false,
+                WorkingDirectory = workingDirectory,
+                Summary = "当前目录不在 Git 仓库中，无法清理 worktree。",
+            };
+        }
+
+        if (!IsManagedWorktreePath(gitRoot, workingDirectory))
+        {
+            return new WorktreeMaintenanceResult
+            {
+                Success = false,
+                GitRoot = gitRoot,
+                WorkingDirectory = workingDirectory,
+                Summary = "当前会话不在受管的 .worktrees 目录中，已阻止清理。",
+            };
+        }
+
+        var dirtyResult = await RunGitAsync(gitPath, ["status", "--porcelain"], workingDirectory, cancellationToken).ConfigureAwait(false);
+        if (!dirtyResult.IsSuccess)
+        {
+            return new WorktreeMaintenanceResult
+            {
+                Success = false,
+                GitRoot = gitRoot,
+                WorkingDirectory = workingDirectory,
+                Summary = string.IsNullOrWhiteSpace(dirtyResult.StandardError)
+                    ? "无法检查 worktree 状态。"
+                    : $"无法检查 worktree 状态：{dirtyResult.StandardError}",
+            };
+        }
+
+        if (!string.IsNullOrWhiteSpace(dirtyResult.StandardOutput))
+        {
+            return new WorktreeMaintenanceResult
+            {
+                Success = false,
+                GitRoot = gitRoot,
+                WorkingDirectory = workingDirectory,
+                Summary = "worktree 中仍有未提交改动，已阻止清理。",
+            };
+        }
+
+        var branchResult = await RunGitAsync(gitPath, ["branch", "--show-current"], workingDirectory, cancellationToken).ConfigureAwait(false);
+        var branchName = branchResult.IsSuccess ? branchResult.StandardOutput.Trim() : null;
+
+        var removeResult = await RunGitAsync(gitPath, ["worktree", "remove", workingDirectory], gitRoot, cancellationToken).ConfigureAwait(false);
+        if (!removeResult.IsSuccess)
+        {
+            return new WorktreeMaintenanceResult
+            {
+                Success = false,
+                GitRoot = gitRoot,
+                WorkingDirectory = workingDirectory,
+                BranchName = branchName,
+                Summary = string.IsNullOrWhiteSpace(removeResult.StandardError)
+                    ? "移除 worktree 失败。"
+                    : $"移除 worktree 失败：{removeResult.StandardError}",
+            };
+        }
+
+        var messages = new List<string> { "worktree 已移除。" };
+        var branchDeleted = false;
+        if (!string.IsNullOrWhiteSpace(branchName))
+        {
+            var deleteBranchResult = await RunGitAsync(gitPath, ["branch", "-d", branchName], gitRoot, cancellationToken).ConfigureAwait(false);
+            if (deleteBranchResult.IsSuccess)
+            {
+                branchDeleted = true;
+                messages.Add($"已删除已合并分支 {branchName}。");
+            }
+            else
+            {
+                messages.Add(string.IsNullOrWhiteSpace(deleteBranchResult.StandardError)
+                    ? $"分支 {branchName} 未删除，请手动确认是否保留。"
+                    : $"分支 {branchName} 保留：{deleteBranchResult.StandardError.Trim()}");
+            }
+        }
+
+        return new WorktreeMaintenanceResult
+        {
+            Success = true,
+            GitRoot = gitRoot,
+            WorkingDirectory = workingDirectory,
+            BranchName = branchName,
+            WorktreeRemoved = true,
+            BranchDeleted = branchDeleted,
+            Summary = string.Join(" ", messages),
+            Messages = messages,
+        };
+    }
+
+    public async Task<IReadOnlyList<string>> CleanupOrphanedWorktreesAsync(string workingDirectory, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workingDirectory);
+
+        var gitPath = ResolveGitPath();
+        if (gitPath is null)
+        {
+            return [];
+        }
+
+        var gitRoot = await TryResolveGitRootAsync(gitPath, workingDirectory, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(gitRoot))
+        {
+            return [];
+        }
+
+        var managedRoot = Path.Combine(gitRoot, ".worktrees");
+        if (!Directory.Exists(managedRoot))
+        {
+            return [];
+        }
+
+        var listResult = await RunGitAsync(gitPath, ["worktree", "list", "--porcelain"], gitRoot, cancellationToken).ConfigureAwait(false);
+        if (!listResult.IsSuccess)
+        {
+            return [];
+        }
+
+        var registeredPaths = ParseRegisteredWorktreePaths(listResult.StandardOutput);
+        var removedDirectories = new List<string>();
+        foreach (var directory in Directory.EnumerateDirectories(managedRoot, "*", SearchOption.TopDirectoryOnly))
+        {
+            var normalizedPath = Path.GetFullPath(directory);
+            if (registeredPaths.Contains(normalizedPath))
+            {
+                continue;
+            }
+
+            Directory.Delete(normalizedPath, recursive: true);
+            removedDirectories.Add(normalizedPath);
+        }
+
+        return removedDirectories;
     }
 
     public async Task<string> ReadPaneTextAsync(LauncherSession session, int paneId, int lastLines, CancellationToken cancellationToken = default)
@@ -1024,6 +1185,23 @@ public sealed class WezTermService : IWezTermService
         return _commandLocator.Resolve("git");
     }
 
+    private async Task<ProcessResult> RunGitAsync(
+        string gitPath,
+        IReadOnlyList<string> arguments,
+        string workingDirectory,
+        CancellationToken cancellationToken)
+    {
+        return await _processRunner.RunAsync(
+            new ProcessCommand
+            {
+                FileName = gitPath,
+                Arguments = arguments,
+                WorkingDirectory = workingDirectory,
+                Timeout = TimeSpan.FromSeconds(20),
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private static string ResolveLaunchDirectory(LaunchRequest request)
     {
         return string.IsNullOrWhiteSpace(request.ResolvedWorkingDirectory)
@@ -1057,6 +1235,13 @@ public sealed class WezTermService : IWezTermService
         return ParsePanes(result.StandardOutput);
     }
 
+    private static bool IsManagedWorktreePath(string gitRoot, string workingDirectory)
+    {
+        var managedRoot = Path.GetFullPath(Path.Combine(gitRoot, ".worktrees")) + Path.DirectorySeparatorChar;
+        var candidate = Path.GetFullPath(workingDirectory);
+        return candidate.StartsWith(managedRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task<string?> TryResolveGitRootAsync(string gitPath, string workingDirectory, CancellationToken cancellationToken)
     {
         var result = await _processRunner.RunAsync(
@@ -1079,6 +1264,28 @@ public sealed class WezTermService : IWezTermService
         }
 
         return result.StandardOutput.Trim();
+    }
+
+    private static HashSet<string> ParseRegisteredWorktreePaths(string output)
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!line.StartsWith("worktree ", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var path = line["worktree ".Length..].Trim();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            paths.Add(Path.GetFullPath(path));
+        }
+
+        return paths;
     }
 
     private static string BuildWorktreeBranchName(LaunchRequest request)

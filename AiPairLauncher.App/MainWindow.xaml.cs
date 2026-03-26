@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -20,6 +21,7 @@ public partial class MainWindow : Window
     private readonly MainWindowViewModel _viewModel;
     private readonly DispatcherTimer _sessionHealthTimer;
     private readonly Dictionary<string, EventHandler<AutomationRunState>> _automationHandlers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AutomationSettings> _automationSettingsBySession = new(StringComparer.Ordinal);
     private bool _hasInitialized;
     private bool _isRefreshingSessionHealth;
     private LauncherSession? _currentSession;
@@ -72,6 +74,8 @@ public partial class MainWindow : Window
         await RefreshDependenciesAsync();
         await LoadLaunchProfilesAsync();
         await LoadSessionCatalogAsync(writeLog: true);
+        await RestoreAutomationSnapshotIfPossibleAsync(_viewModel.SelectedSessionRecord?.Session).ConfigureAwait(true);
+        await LoadAutomationHistoryAsync(_viewModel.SelectedSessionRecord?.SessionId).ConfigureAwait(true);
         await RefreshSessionHealthAsync(writeLog: false);
         _sessionHealthTimer.Start();
         _viewModel.AppendLog("多会话指挥台已就绪，可从左侧管理会话并在右侧执行启动、发送与自动编排。");
@@ -80,6 +84,16 @@ public partial class MainWindow : Window
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         _sessionHealthTimer.Stop();
+        foreach (var sessionId in _automationHandlers.Keys.ToArray())
+        {
+            if (_sessionRuntimeRegistry.TryGetAutomationCoordinator(sessionId, out var coordinator) &&
+                coordinator is not null &&
+                _automationSettingsBySession.TryGetValue(sessionId, out var settings))
+            {
+                PersistAutomationSnapshotAsync(sessionId, settings, coordinator.GetCurrentState()).GetAwaiter().GetResult();
+            }
+        }
+
         foreach (var entry in _automationHandlers.ToArray())
         {
             if (_sessionRuntimeRegistry.TryGetAutomationCoordinator(entry.Key, out var coordinator) &&
@@ -177,12 +191,16 @@ public partial class MainWindow : Window
         if (selectedRecord is null)
         {
             _viewModel.ResetAutomationState();
+            _viewModel.ReplaceAutomationHistory([]);
             return;
         }
 
         await _sessionStore.SelectAsync(selectedRecord.SessionId).ConfigureAwait(true);
         _currentSession = selectedRecord.Session;
         _viewModel.FooterMessage = $"当前会话: {selectedRecord.DisplayName} / {selectedRecord.HealthDisplayText}";
+
+        await RestoreAutomationSnapshotIfPossibleAsync(selectedRecord.Session).ConfigureAwait(true);
+        await LoadAutomationHistoryAsync(selectedRecord.SessionId).ConfigureAwait(true);
 
         if (_sessionRuntimeRegistry.TryGetAutomationCoordinator(selectedRecord.SessionId, out var coordinator) &&
             coordinator is not null)
@@ -248,12 +266,14 @@ public partial class MainWindow : Window
                 savedRecord.LaunchProfileId = string.IsNullOrWhiteSpace(_viewModel.SelectedLaunchProfileId)
                     ? null
                     : _viewModel.SelectedLaunchProfileId;
+                savedRecord.GroupName = _viewModel.SessionGroupName;
                 savedRecord.LastSummary = worktreeContext.Summary;
                 savedRecord.UpdatedAt = DateTimeOffset.Now;
                 await _sessionStore.UpsertAsync(savedRecord).ConfigureAwait(true);
             }
 
             await LoadSessionCatalogAsync(_currentSession.SessionId, writeLog: false).ConfigureAwait(true);
+            await LoadAutomationHistoryAsync(_currentSession.SessionId).ConfigureAwait(true);
             _viewModel.AppendLog($"会话启动成功，工作区: {_currentSession.Workspace}，Claude 模式: {_viewModel.ClaudeModeDisplayText}，Codex 模式: {_viewModel.CodexModeDisplayText}。");
             _viewModel.AppendLog(worktreeContext.Summary);
             _viewModel.FooterMessage = $"最近操作: 已启动工作区 {_currentSession.Workspace}";
@@ -362,6 +382,193 @@ public partial class MainWindow : Window
         });
     }
 
+    private async void TogglePinSession_Click(object sender, RoutedEventArgs e)
+    {
+        var sessionId = ResolveSessionId(sender);
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        await ExecuteActionAsync("切换置顶", async () =>
+        {
+            var record = await _sessionStore.GetAsync(sessionId).ConfigureAwait(true);
+            if (record is null)
+            {
+                throw new InvalidOperationException("会话记录不存在。");
+            }
+
+            await _sessionStore.SetPinnedAsync(sessionId, !record.IsPinned).ConfigureAwait(true);
+            await LoadSessionCatalogAsync(sessionId, writeLog: false).ConfigureAwait(true);
+            _viewModel.FooterMessage = !record.IsPinned ? "会话已置顶" : "会话已取消置顶";
+        });
+    }
+
+    private async void ArchiveSession_Click(object sender, RoutedEventArgs e)
+    {
+        var sessionId = ResolveSessionId(sender) ?? _viewModel.SelectedSessionRecord?.SessionId;
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        await ExecuteActionAsync("归档会话", async () =>
+        {
+            await _sessionStore.ArchiveAsync(sessionId).ConfigureAwait(true);
+            await LoadSessionCatalogAsync(writeLog: false).ConfigureAwait(true);
+            _viewModel.FooterMessage = "会话已归档";
+        });
+    }
+
+    private async void RestoreSession_Click(object sender, RoutedEventArgs e)
+    {
+        var sessionId = ResolveSessionId(sender) ?? _viewModel.SelectedSessionRecord?.SessionId;
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        await ExecuteActionAsync("恢复会话", async () =>
+        {
+            await _sessionStore.RestoreAsync(sessionId).ConfigureAwait(true);
+            _viewModel.ShowArchivedSessions = true;
+            await LoadSessionCatalogAsync(sessionId, writeLog: false).ConfigureAwait(true);
+            _viewModel.FooterMessage = "会话已恢复";
+        });
+    }
+
+    private async void SaveSessionMetadata_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("保存会话信息", async () =>
+        {
+            var record = _viewModel.SelectedSessionRecord;
+            if (record is null)
+            {
+                throw new InvalidOperationException("当前没有选中的会话。");
+            }
+
+            await _sessionStore.RenameSessionAsync(record.SessionId, _viewModel.EditableSessionDisplayName).ConfigureAwait(true);
+            await _sessionStore.MoveToGroupAsync(record.SessionId, _viewModel.EditableSessionGroupName).ConfigureAwait(true);
+            await LoadSessionCatalogAsync(record.SessionId, writeLog: false).ConfigureAwait(true);
+            _viewModel.FooterMessage = "会话名称和分组已更新";
+        });
+    }
+
+    private async void CopySessionConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var sessionId = ResolveSessionId(sender) ?? _viewModel.SelectedSessionRecord?.SessionId;
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        await ExecuteActionAsync("复制启动配置", async () =>
+        {
+            _viewModel.SelectSessionById(sessionId);
+            var record = _viewModel.ApplySelectedSessionToLaunchForm();
+            if (record is null)
+            {
+                throw new InvalidOperationException("未找到可复制的会话。");
+            }
+
+            _viewModel.AppendLog($"已复制会话 {record.DisplayName} 的启动配置到右侧表单。");
+            _viewModel.FooterMessage = $"已复制 {record.DisplayName} 的启动配置";
+            await Task.CompletedTask;
+        });
+    }
+
+    private void SelectPendingSession_Click(object sender, RoutedEventArgs e)
+    {
+        var sessionId = ResolveSessionId(sender);
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        _viewModel.SelectSessionById(sessionId);
+    }
+
+    private void OpenWorktreePath_Click(object sender, RoutedEventArgs e)
+    {
+        var record = _viewModel.SelectedSessionRecord;
+        if (record is null || !Directory.Exists(record.Session.WorkingDirectory))
+        {
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = $"\"{record.Session.WorkingDirectory}\"",
+            UseShellExecute = true,
+        });
+        _viewModel.FooterMessage = "已打开 worktree 目录";
+    }
+
+    private async void CleanupWorktree_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("清理 worktree", async () =>
+        {
+            var record = _viewModel.SelectedSessionRecord;
+            if (record is null)
+            {
+                throw new InvalidOperationException("当前没有选中的会话。");
+            }
+
+            var choice = System.Windows.MessageBox.Show(
+                "将尝试移除当前 worktree，并在分支已合并时一并删除分支。\n如果存在未提交改动，程序会阻止执行。\n\n是否继续？",
+                "清理 worktree",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+
+            if (choice != System.Windows.MessageBoxResult.Yes)
+            {
+                _viewModel.FooterMessage = "已取消清理 worktree";
+                return;
+            }
+
+            var result = await _wezTermService.CleanupWorktreeAsync(record.Session.WorkingDirectory).ConfigureAwait(true);
+            _viewModel.AppendLog(result.Summary);
+            _viewModel.FooterMessage = result.Summary;
+        });
+    }
+
+    private async void CleanupOrphanedWorktrees_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("清理孤儿 worktree", async () =>
+        {
+            var record = _viewModel.SelectedSessionRecord;
+            if (record is null)
+            {
+                throw new InvalidOperationException("当前没有选中的会话。");
+            }
+
+            var choice = System.Windows.MessageBox.Show(
+                "将清理当前仓库 .worktrees 目录下未注册的孤儿目录。\n这是删除目录操作，请确认当前仓库状态。\n\n是否继续？",
+                "清理孤儿 worktree",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+
+            if (choice != System.Windows.MessageBoxResult.Yes)
+            {
+                _viewModel.FooterMessage = "已取消清理孤儿 worktree";
+                return;
+            }
+
+            var removed = await _wezTermService.CleanupOrphanedWorktreesAsync(record.Session.WorkingDirectory).ConfigureAwait(true);
+            var summary = removed.Count == 0
+                ? "未发现可清理的孤儿 worktree"
+                : $"已清理 {removed.Count} 个孤儿 worktree";
+            _viewModel.AppendLog(summary);
+            foreach (var path in removed)
+            {
+                _viewModel.AppendLog($"已删除孤儿目录: {path}");
+            }
+
+            _viewModel.FooterMessage = summary;
+        });
+    }
+
     private async void ClearAppCache_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("清理程序缓存", async () =>
@@ -388,6 +595,7 @@ public partial class MainWindow : Window
             _currentSession = null;
             _viewModel.ApplySessionCatalog([], null);
             _viewModel.ResetAutomationState();
+            _viewModel.ReplaceAutomationHistory([]);
             _viewModel.AppendLog($"程序缓存清理完成: {cleanupResult.Summary}");
             _viewModel.FooterMessage = "最近操作: 已清理程序缓存";
         });
@@ -569,7 +777,15 @@ public partial class MainWindow : Window
 
     private async Task SendContextAsync(bool fromLeftToRight)
     {
-        await ExecuteActionAsync(fromLeftToRight ? "左向右发送" : "右向左发送", async () =>
+        if (_viewModel.IsBusy)
+        {
+            return;
+        }
+
+        var actionName = fromLeftToRight ? "左向右发送" : "右向左发送";
+        _viewModel.IsBusy = true;
+        _viewModel.StatusMessage = $"{actionName}中...";
+        try
         {
             EnsureWezTermService();
             await EnsureSessionReadyAsync().ConfigureAwait(true);
@@ -587,10 +803,23 @@ public partial class MainWindow : Window
                 .SendContextAsync(_currentSession!, request)
                 .ConfigureAwait(true);
 
+            _viewModel.RecordTransferSuccess(transferResult);
             var direction = $"{transferResult.SourcePaneId}->{transferResult.TargetPaneId}";
             _viewModel.AppendLog($"上下文发送成功: {direction}, 字符数 {transferResult.CapturedLength}");
             _viewModel.FooterMessage = $"最近发送: {direction}, 抓取 {transferResult.LastLines} 行";
-        });
+            _viewModel.StatusMessage = $"{actionName}完成";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.RecordTransferFailure(ex.Message);
+            _viewModel.StatusMessage = $"{actionName}失败";
+            _viewModel.AppendLog($"{actionName}失败: {ex.Message}");
+            _viewModel.FooterMessage = $"{actionName}失败，请检查日志。";
+        }
+        finally
+        {
+            _viewModel.IsBusy = false;
+        }
     }
 
     private async Task StartAutomationCoreAsync(bool autoStartedByLaunch)
@@ -629,10 +858,14 @@ public partial class MainWindow : Window
 
         var coordinator = _sessionRuntimeRegistry.GetOrCreateAutomationCoordinator(_currentSession.SessionId);
         EnsureAutomationCoordinatorSubscription(_currentSession.SessionId, coordinator);
+        _automationSettingsBySession[_currentSession.SessionId] = settings;
 
         await coordinator
             .StartAsync(_currentSession, settings)
             .ConfigureAwait(true);
+
+        await PersistAutomationSnapshotAsync(_currentSession.SessionId, settings, coordinator.GetCurrentState()).ConfigureAwait(true);
+        await LoadAutomationHistoryAsync(_currentSession.SessionId).ConfigureAwait(true);
 
         _viewModel.AppendLog($"自动编排已启动，推进策略: {_viewModel.SelectedAutomationAdvancePolicyKey}。");
         _viewModel.FooterMessage = "自动编排已启动";
@@ -662,6 +895,12 @@ public partial class MainWindow : Window
         }
 
         await coordinator.StopAsync().ConfigureAwait(true);
+        if (_automationSettingsBySession.TryGetValue(_currentSession.SessionId, out var settings))
+        {
+            await PersistAutomationSnapshotAsync(_currentSession.SessionId, settings, coordinator.GetCurrentState()).ConfigureAwait(true);
+        }
+        await _sessionStore.SaveAutomationEventAsync(AutomationEventRecord.FromState(_currentSession.SessionId, coordinator.GetCurrentState())).ConfigureAwait(true);
+        await LoadAutomationHistoryAsync(_currentSession.SessionId).ConfigureAwait(true);
         _viewModel.AppendLog("已停止当前自动编排。");
         _viewModel.FooterMessage = "自动编排已停止";
         await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
@@ -868,10 +1107,17 @@ public partial class MainWindow : Window
     {
         await Dispatcher.InvokeAsync(async () =>
         {
+            await _sessionStore.SaveAutomationEventAsync(AutomationEventRecord.FromState(sessionId, state)).ConfigureAwait(true);
+            if (_automationSettingsBySession.TryGetValue(sessionId, out var settings))
+            {
+                await PersistAutomationSnapshotAsync(sessionId, settings, state).ConfigureAwait(true);
+            }
+
             if (_currentSession is not null &&
                 string.Equals(_currentSession.SessionId, sessionId, StringComparison.Ordinal))
             {
                 _viewModel.ApplyAutomationState(state);
+                await LoadAutomationHistoryAsync(sessionId).ConfigureAwait(true);
             }
 
             _viewModel.AppendLog($"自动编排[{sessionId}] 状态: {state.Status} / {state.StatusDetail}");
@@ -891,6 +1137,75 @@ public partial class MainWindow : Window
 
             await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
         });
+    }
+
+    private async Task LoadAutomationHistoryAsync(string? sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            _viewModel.ReplaceAutomationHistory([]);
+            return;
+        }
+
+        var events = await _sessionStore.ListAutomationEventsAsync(sessionId, 24).ConfigureAwait(true);
+        _viewModel.ReplaceAutomationHistory(events);
+    }
+
+    private async Task PersistAutomationSnapshotAsync(string sessionId, AutomationSettings settings, AutomationRunState state)
+    {
+        await _sessionStore.SaveAutomationSnapshotAsync(new PersistedAutomationSnapshot
+        {
+            SessionId = sessionId,
+            Settings = settings,
+            State = state,
+            UpdatedAt = state.UpdatedAt,
+        }).ConfigureAwait(true);
+    }
+
+    private async Task RestoreAutomationSnapshotIfPossibleAsync(LauncherSession? session)
+    {
+        if (session is null)
+        {
+            return;
+        }
+
+        if (_sessionRuntimeRegistry.TryGetAutomationCoordinator(session.SessionId, out _))
+        {
+            return;
+        }
+
+        var snapshot = await _sessionStore.GetAutomationSnapshotAsync(session.SessionId).ConfigureAwait(true);
+        if (snapshot is null)
+        {
+            return;
+        }
+
+        _automationSettingsBySession[session.SessionId] = snapshot.Settings;
+        if (!snapshot.CanResume)
+        {
+            if (_currentSession is not null && string.Equals(_currentSession.SessionId, session.SessionId, StringComparison.Ordinal))
+            {
+                _viewModel.ApplyAutomationState(snapshot.State);
+            }
+
+            return;
+        }
+
+        var coordinator = _sessionRuntimeRegistry.GetOrCreateAutomationCoordinator(session.SessionId);
+        EnsureAutomationCoordinatorSubscription(session.SessionId, coordinator);
+        await coordinator.RestoreAsync(session, snapshot.Settings, snapshot.State).ConfigureAwait(true);
+
+        if (_currentSession is not null && string.Equals(_currentSession.SessionId, session.SessionId, StringComparison.Ordinal))
+        {
+            _viewModel.ApplyAutomationState(coordinator.GetCurrentState());
+        }
+    }
+
+    private static string? ResolveSessionId(object sender)
+    {
+        return sender is FrameworkElement element
+            ? element.Tag as string
+            : null;
     }
 
     private async Task ExecuteActionAsync(string actionName, Func<Task> action)

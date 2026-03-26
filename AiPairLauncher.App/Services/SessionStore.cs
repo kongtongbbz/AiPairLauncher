@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AiPairLauncher.App.Models;
 using Microsoft.Data.Sqlite;
 
@@ -14,6 +15,13 @@ public sealed class SessionStore : ISessionStore
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true,
+    };
+
+    private static readonly JsonSerializerOptions AutomationJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false,
+        Converters = { new JsonStringEnumConverter() },
     };
 
     public string LegacySessionFilePath { get; }
@@ -153,6 +161,7 @@ public sealed class SessionStore : ISessionStore
             """
             SELECT
                 profile_id, name, description, working_directory, workspace_prefix,
+                default_group_name, transfer_instruction_template, default_panel_preset,
                 claude_permission_mode, codex_mode, right_pane_percent,
                 automation_enabled, automation_observer_enabled, automation_advance_policy,
                 automation_poll_interval_ms, automation_capture_lines, automation_timeout_seconds,
@@ -170,6 +179,163 @@ public sealed class SessionStore : ISessionStore
         }
 
         return profiles;
+    }
+
+    public async Task SaveAutomationEventAsync(AutomationEventRecord eventRecord, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(eventRecord);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO automation_events (
+                event_id, session_id, status, stage_id, status_detail, last_packet_summary,
+                last_error, intervention_reason, pending_approval_json,
+                auto_approved_stage_count, current_stage_retry_count, occurred_at
+            )
+            VALUES (
+                $event_id, $session_id, $status, $stage_id, $status_detail, $last_packet_summary,
+                $last_error, $intervention_reason, $pending_approval_json,
+                $auto_approved_stage_count, $current_stage_retry_count, $occurred_at
+            );
+            """;
+        AddParameter(command, "$event_id", eventRecord.EventId);
+        AddParameter(command, "$session_id", eventRecord.SessionId);
+        AddParameter(command, "$status", eventRecord.Status.ToString());
+        AddParameter(command, "$stage_id", eventRecord.StageId);
+        AddParameter(command, "$status_detail", eventRecord.StatusDetail);
+        AddParameter(command, "$last_packet_summary", eventRecord.LastPacketSummary);
+        AddParameter(command, "$last_error", eventRecord.LastError);
+        AddParameter(command, "$intervention_reason", eventRecord.InterventionReason);
+        AddParameter(command, "$pending_approval_json", SerializeJson(eventRecord.PendingApproval));
+        AddParameter(command, "$auto_approved_stage_count", eventRecord.AutoApprovedStageCount);
+        AddParameter(command, "$current_stage_retry_count", eventRecord.CurrentStageRetryCount);
+        AddParameter(command, "$occurred_at", ToDbString(eventRecord.OccurredAt));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<AutomationEventRecord>> ListAutomationEventsAsync(
+        string sessionId,
+        int take = 20,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT
+                event_id, session_id, status, stage_id, status_detail, last_packet_summary,
+                last_error, intervention_reason, pending_approval_json,
+                auto_approved_stage_count, current_stage_retry_count, occurred_at
+            FROM automation_events
+            WHERE session_id = $session_id
+            ORDER BY occurred_at DESC
+            LIMIT $take;
+            """;
+        AddParameter(command, "$session_id", sessionId);
+        AddParameter(command, "$take", Math.Max(1, take));
+
+        var items = new List<AutomationEventRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            items.Add(new AutomationEventRecord
+            {
+                EventId = reader.GetString(0),
+                SessionId = reader.GetString(1),
+                Status = Enum.TryParse<AutomationStageStatus>(reader.GetString(2), out var status) ? status : AutomationStageStatus.Idle,
+                StageId = ReadNullableInt(reader, 3),
+                StatusDetail = reader.GetString(4),
+                LastPacketSummary = reader.GetString(5),
+                LastError = ReadNullableString(reader, 6),
+                InterventionReason = ReadNullableString(reader, 7),
+                PendingApproval = DeserializeJson<ApprovalDraft>(ReadNullableString(reader, 8)),
+                AutoApprovedStageCount = reader.GetInt32(9),
+                CurrentStageRetryCount = reader.GetInt32(10),
+                OccurredAt = ParseDbDateTime(reader.GetString(11)),
+            });
+        }
+
+        return items;
+    }
+
+    public async Task SaveAutomationSnapshotAsync(PersistedAutomationSnapshot snapshot, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO automation_snapshots (
+                session_id, settings_json, state_json, updated_at
+            )
+            VALUES (
+                $session_id, $settings_json, $state_json, $updated_at
+            )
+            ON CONFLICT(session_id) DO UPDATE SET
+                settings_json = excluded.settings_json,
+                state_json = excluded.state_json,
+                updated_at = excluded.updated_at;
+            """;
+        AddParameter(command, "$session_id", snapshot.SessionId);
+        AddParameter(command, "$settings_json", SerializeJson(snapshot.Settings));
+        AddParameter(command, "$state_json", SerializeJson(snapshot.State));
+        AddParameter(command, "$updated_at", ToDbString(snapshot.UpdatedAt));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<PersistedAutomationSnapshot?> GetAutomationSnapshotAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT session_id, settings_json, state_json, updated_at
+            FROM automation_snapshots
+            WHERE session_id = $session_id;
+            """;
+        AddParameter(command, "$session_id", sessionId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        return new PersistedAutomationSnapshot
+        {
+            SessionId = reader.GetString(0),
+            Settings = DeserializeJson<AutomationSettings>(reader.GetString(1)) ?? new AutomationSettings(),
+            State = DeserializeJson<AutomationRunState>(reader.GetString(2)) ?? new AutomationRunState(),
+            UpdatedAt = ParseDbDateTime(reader.GetString(3)),
+        };
+    }
+
+    public async Task ClearAutomationSnapshotAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM automation_snapshots WHERE session_id = $session_id;";
+        AddParameter(command, "$session_id", sessionId);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SelectAsync(string sessionId, CancellationToken cancellationToken = default)
@@ -217,6 +383,53 @@ public sealed class SessionStore : ISessionStore
         await UpsertRecordAsync(sessionRecord.Clone(), sessionRecord.SessionId, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task RenameSessionAsync(string sessionId, string displayName, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
+
+        var record = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (record is null)
+        {
+            return;
+        }
+
+        record.DisplayName = displayName.Trim();
+        record.UpdatedAt = DateTimeOffset.Now;
+        await UpsertAsync(record, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task SetPinnedAsync(string sessionId, bool isPinned, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+
+        var record = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (record is null)
+        {
+            return;
+        }
+
+        record.IsPinned = isPinned;
+        record.UpdatedAt = DateTimeOffset.Now;
+        await UpsertAsync(record, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task MoveToGroupAsync(string sessionId, string groupName, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupName);
+
+        var record = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (record is null)
+        {
+            return;
+        }
+
+        record.GroupName = groupName.Trim();
+        record.UpdatedAt = DateTimeOffset.Now;
+        await UpsertAsync(record, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task ArchiveAsync(string sessionId, CancellationToken cancellationToken = default)
     {
         var record = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
@@ -252,6 +465,39 @@ public sealed class SessionStore : ISessionStore
         command.CommandText = "DELETE FROM sessions WHERE session_id = $session_id;";
         AddParameter(command, "$session_id", sessionId);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<LaunchProfile?> DuplicateSessionConfigAsync(string sessionId, string profileName, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(profileName);
+
+        var record = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (record is null)
+        {
+            return null;
+        }
+
+        var profile = new LaunchProfile
+        {
+            Name = profileName.Trim(),
+            Description = $"从会话 {record.DisplayName} 复制启动配置",
+            WorkingDirectory = record.Session.WorkingDirectory,
+            WorkspacePrefix = record.Session.Workspace,
+            DefaultGroupName = record.GroupName,
+            ClaudePermissionMode = record.Session.ClaudePermissionMode,
+            CodexMode = record.Session.CodexMode,
+            RightPanePercent = record.Session.RightPanePercent,
+            AutomationEnabled = record.Session.AutomationEnabledAtLaunch,
+            AutomationObserverEnabled = record.Session.AutomationObserverEnabled,
+            AutomationAdvancePolicy = "full-auto-loop",
+            WorktreeStrategy = record.UsesWorktree ? "subdirectory" : "none",
+            DefaultUseWorktree = record.UsesWorktree,
+            DefaultWorktreeStrategy = record.UsesWorktree ? "subdirectory" : "none",
+        };
+
+        await SaveLaunchProfileAsync(profile, cancellationToken).ConfigureAwait(false);
+        return profile;
     }
 
     public async Task<string?> GetSelectedSessionIdAsync(CancellationToken cancellationToken = default)
@@ -392,6 +638,8 @@ public sealed class SessionStore : ISessionStore
                 last_activity_at TEXT NOT NULL,
                 last_error TEXT NULL,
                 last_summary TEXT NOT NULL,
+                claude_preview TEXT NOT NULL DEFAULT '暂无输出',
+                codex_preview TEXT NOT NULL DEFAULT '暂无输出',
                 needs_approval INTEGER NOT NULL,
                 automation_stage_id INTEGER NULL,
                 automation_retry_count INTEGER NOT NULL,
@@ -405,6 +653,9 @@ public sealed class SessionStore : ISessionStore
                 description TEXT NOT NULL,
                 working_directory TEXT NULL,
                 workspace_prefix TEXT NULL,
+                default_group_name TEXT NOT NULL DEFAULT '默认',
+                transfer_instruction_template TEXT NOT NULL DEFAULT '请基于下面这段终端输出继续处理。先给出结论，再给出下一步动作。',
+                default_panel_preset TEXT NOT NULL DEFAULT 'balanced',
                 claude_permission_mode TEXT NOT NULL,
                 codex_mode TEXT NOT NULL,
                 right_pane_percent INTEGER NOT NULL,
@@ -422,12 +673,41 @@ public sealed class SessionStore : ISessionStore
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS automation_events (
+                event_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                stage_id INTEGER NULL,
+                status_detail TEXT NOT NULL,
+                last_packet_summary TEXT NOT NULL,
+                last_error TEXT NULL,
+                intervention_reason TEXT NULL,
+                pending_approval_json TEXT NULL,
+                auto_approved_stage_count INTEGER NOT NULL,
+                current_stage_retry_count INTEGER NOT NULL,
+                occurred_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS automation_snapshots (
+                session_id TEXT PRIMARY KEY,
+                settings_json TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS app_state (
                 state_key TEXT PRIMARY KEY,
                 state_value TEXT NULL
             );
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "claude_preview", "TEXT NOT NULL DEFAULT '暂无输出'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "codex_preview", "TEXT NOT NULL DEFAULT '暂无输出'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "default_group_name", "TEXT NOT NULL DEFAULT '默认'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "transfer_instruction_template", "TEXT NOT NULL DEFAULT '请基于下面这段终端输出继续处理。先给出结论，再给出下一步动作。'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "default_panel_preset", "TEXT NOT NULL DEFAULT 'balanced'", cancellationToken).ConfigureAwait(false);
         await EnsureDefaultLaunchProfilesAsync(connection, cancellationToken).ConfigureAwait(false);
         await ImportLegacySessionIfNeededAsync(connection, cancellationToken).ConfigureAwait(false);
     }
@@ -447,6 +727,31 @@ public sealed class SessionStore : ISessionStore
             var command = CreateLaunchProfileUpsertCommand(connection, profile, null);
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static async Task EnsureColumnAsync(
+        SqliteConnection connection,
+        string tableName,
+        string columnName,
+        string columnDefinition,
+        CancellationToken cancellationToken)
+    {
+        var pragmaCommand = connection.CreateCommand();
+        pragmaCommand.CommandText = $"PRAGMA table_info({tableName});";
+
+        await using var reader = await pragmaCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        await reader.DisposeAsync().ConfigureAwait(false);
+        var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnDefinition};";
+        await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ImportLegacySessionIfNeededAsync(SqliteConnection connection, CancellationToken cancellationToken)
@@ -490,6 +795,7 @@ public sealed class SessionStore : ISessionStore
                 r.gui_pid, r.socket_path, r.left_pane_id, r.right_pane_id, r.claude_observer_pane_id,
                 r.codex_observer_pane_id, r.is_alive, r.updated_at,
                 p.status, p.status_detail, p.last_activity_at, p.last_error, p.last_summary,
+                p.claude_preview, p.codex_preview,
                 p.needs_approval, p.automation_stage_id, p.automation_retry_count, p.updated_at
             FROM sessions s
             LEFT JOIN session_runtime_bindings r ON r.session_id = s.session_id
@@ -528,6 +834,7 @@ public sealed class SessionStore : ISessionStore
                 r.gui_pid, r.socket_path, r.left_pane_id, r.right_pane_id, r.claude_observer_pane_id,
                 r.codex_observer_pane_id, r.is_alive, r.updated_at,
                 p.status, p.status_detail, p.last_activity_at, p.last_error, p.last_summary,
+                p.claude_preview, p.codex_preview,
                 p.needs_approval, p.automation_stage_id, p.automation_retry_count, p.updated_at
             FROM sessions s
             LEFT JOIN session_runtime_bindings r ON r.session_id = s.session_id
@@ -673,11 +980,11 @@ public sealed class SessionStore : ISessionStore
             """
             INSERT INTO session_status_snapshots (
                 session_id, status, status_detail, last_activity_at, last_error,
-                last_summary, needs_approval, automation_stage_id, automation_retry_count, updated_at
+                last_summary, claude_preview, codex_preview, needs_approval, automation_stage_id, automation_retry_count, updated_at
             )
             VALUES (
                 $session_id, $status, $status_detail, $last_activity_at, $last_error,
-                $last_summary, $needs_approval, $automation_stage_id, $automation_retry_count, $updated_at
+                $last_summary, $claude_preview, $codex_preview, $needs_approval, $automation_stage_id, $automation_retry_count, $updated_at
             )
             ON CONFLICT(session_id) DO UPDATE SET
                 status = excluded.status,
@@ -685,6 +992,8 @@ public sealed class SessionStore : ISessionStore
                 last_activity_at = excluded.last_activity_at,
                 last_error = excluded.last_error,
                 last_summary = excluded.last_summary,
+                claude_preview = excluded.claude_preview,
+                codex_preview = excluded.codex_preview,
                 needs_approval = excluded.needs_approval,
                 automation_stage_id = excluded.automation_stage_id,
                 automation_retry_count = excluded.automation_retry_count,
@@ -696,6 +1005,8 @@ public sealed class SessionStore : ISessionStore
         AddParameter(snapshotCommand, "$last_activity_at", ToDbString(record.LastSeenAt == default ? DateTimeOffset.Now : record.LastSeenAt));
         AddParameter(snapshotCommand, "$last_error", record.LastError);
         AddParameter(snapshotCommand, "$last_summary", record.LastSummary);
+        AddParameter(snapshotCommand, "$claude_preview", record.StatusSnapshot.ClaudePreview);
+        AddParameter(snapshotCommand, "$codex_preview", record.StatusSnapshot.CodexPreview);
         AddParameter(snapshotCommand, "$needs_approval", record.StatusSnapshot.NeedsApproval);
         AddParameter(snapshotCommand, "$automation_stage_id", record.StatusSnapshot.AutomationStageId);
         AddParameter(snapshotCommand, "$automation_retry_count", record.StatusSnapshot.AutomationRetryCount);
@@ -783,10 +1094,12 @@ public sealed class SessionStore : ISessionStore
                 LastActivityAt = ParseDbDateTime(ReadNullableString(reader, 32) ?? reader.GetString(21)),
                 LastError = ReadNullableString(reader, 33),
                 LastSummary = ReadNullableString(reader, 34) ?? "暂无",
-                NeedsApproval = ReadNullableBool(reader, 35) ?? false,
-                AutomationStageId = ReadNullableInt(reader, 36),
-                AutomationRetryCount = ReadNullableInt(reader, 37) ?? 0,
-                UpdatedAt = ParseDbDateTime(ReadNullableString(reader, 38) ?? reader.GetString(21)),
+                ClaudePreview = ReadNullableString(reader, 35) ?? "暂无输出",
+                CodexPreview = ReadNullableString(reader, 36) ?? "暂无输出",
+                NeedsApproval = ReadNullableBool(reader, 37) ?? false,
+                AutomationStageId = ReadNullableInt(reader, 38),
+                AutomationRetryCount = ReadNullableInt(reader, 39) ?? 0,
+                UpdatedAt = ParseDbDateTime(ReadNullableString(reader, 40) ?? reader.GetString(21)),
             },
         };
     }
@@ -802,6 +1115,7 @@ public sealed class SessionStore : ISessionStore
             """
             INSERT INTO launch_profiles (
                 profile_id, name, description, working_directory, workspace_prefix,
+                default_group_name, transfer_instruction_template, default_panel_preset,
                 claude_permission_mode, codex_mode, right_pane_percent,
                 automation_enabled, automation_observer_enabled, automation_advance_policy,
                 automation_poll_interval_ms, automation_capture_lines, automation_timeout_seconds,
@@ -810,6 +1124,7 @@ public sealed class SessionStore : ISessionStore
             )
             VALUES (
                 $profile_id, $name, $description, $working_directory, $workspace_prefix,
+                $default_group_name, $transfer_instruction_template, $default_panel_preset,
                 $claude_permission_mode, $codex_mode, $right_pane_percent,
                 $automation_enabled, $automation_observer_enabled, $automation_advance_policy,
                 $automation_poll_interval_ms, $automation_capture_lines, $automation_timeout_seconds,
@@ -821,6 +1136,9 @@ public sealed class SessionStore : ISessionStore
                 description = excluded.description,
                 working_directory = excluded.working_directory,
                 workspace_prefix = excluded.workspace_prefix,
+                default_group_name = excluded.default_group_name,
+                transfer_instruction_template = excluded.transfer_instruction_template,
+                default_panel_preset = excluded.default_panel_preset,
                 claude_permission_mode = excluded.claude_permission_mode,
                 codex_mode = excluded.codex_mode,
                 right_pane_percent = excluded.right_pane_percent,
@@ -841,6 +1159,9 @@ public sealed class SessionStore : ISessionStore
         AddParameter(command, "$description", launchProfile.Description);
         AddParameter(command, "$working_directory", launchProfile.WorkingDirectory);
         AddParameter(command, "$workspace_prefix", launchProfile.WorkspacePrefix);
+        AddParameter(command, "$default_group_name", launchProfile.DefaultGroupName);
+        AddParameter(command, "$transfer_instruction_template", launchProfile.TransferInstructionTemplate);
+        AddParameter(command, "$default_panel_preset", launchProfile.DefaultPanelPreset);
         AddParameter(command, "$claude_permission_mode", launchProfile.ClaudePermissionMode);
         AddParameter(command, "$codex_mode", launchProfile.CodexMode);
         AddParameter(command, "$right_pane_percent", launchProfile.RightPanePercent);
@@ -867,6 +1188,21 @@ public sealed class SessionStore : ISessionStore
     private static void AddParameter(SqliteCommand command, string name, object? value)
     {
         command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+    }
+
+    private static string? SerializeJson<T>(T? value)
+    {
+        return value is null ? null : JsonSerializer.Serialize(value, AutomationJsonOptions);
+    }
+
+    private static T? DeserializeJson<T>(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return default;
+        }
+
+        return JsonSerializer.Deserialize<T>(json, AutomationJsonOptions);
     }
 
     private static string? ReadNullableString(SqliteDataReader reader, int ordinal)
@@ -963,7 +1299,7 @@ public sealed class SessionStore : ISessionStore
 
     private static LaunchProfile MapLaunchProfile(SqliteDataReader reader)
     {
-        var worktreeStrategy = reader.GetString(17);
+        var worktreeStrategy = reader.GetString(20);
         var name = reader.GetString(1);
         return new LaunchProfile
         {
@@ -972,24 +1308,27 @@ public sealed class SessionStore : ISessionStore
             Description = reader.GetString(2),
             WorkingDirectory = ReadNullableString(reader, 3),
             WorkspacePrefix = ReadNullableString(reader, 4),
-            ClaudePermissionMode = reader.GetString(5),
-            CodexMode = reader.GetString(6),
-            RightPanePercent = reader.GetInt32(7),
-            AutomationEnabled = reader.GetBoolean(8),
-            AutomationObserverEnabled = reader.GetBoolean(9),
-            AutomationAdvancePolicy = reader.GetString(10),
-            AutomationPollIntervalMilliseconds = reader.GetInt32(11),
-            AutomationCaptureLines = reader.GetInt32(12),
-            AutomationTimeoutSeconds = reader.GetInt32(13),
-            AutomationMaxAutoStages = reader.GetInt32(14),
-            AutomationMaxRetryPerStage = reader.GetInt32(15),
-            AutomationSubmitOnSend = reader.GetBoolean(16),
+            DefaultGroupName = reader.GetString(5),
+            TransferInstructionTemplate = reader.GetString(6),
+            DefaultPanelPreset = reader.GetString(7),
+            ClaudePermissionMode = reader.GetString(8),
+            CodexMode = reader.GetString(9),
+            RightPanePercent = reader.GetInt32(10),
+            AutomationEnabled = reader.GetBoolean(11),
+            AutomationObserverEnabled = reader.GetBoolean(12),
+            AutomationAdvancePolicy = reader.GetString(13),
+            AutomationPollIntervalMilliseconds = reader.GetInt32(14),
+            AutomationCaptureLines = reader.GetInt32(15),
+            AutomationTimeoutSeconds = reader.GetInt32(16),
+            AutomationMaxAutoStages = reader.GetInt32(17),
+            AutomationMaxRetryPerStage = reader.GetInt32(18),
+            AutomationSubmitOnSend = reader.GetBoolean(19),
             IsBuiltIn = IsBuiltInProfile(name),
             DefaultUseWorktree = !string.Equals(worktreeStrategy, "none", StringComparison.OrdinalIgnoreCase),
             WorktreeStrategy = worktreeStrategy,
             DefaultWorktreeStrategy = worktreeStrategy,
-            CreatedAt = ParseDbDateTime(reader.GetString(18)),
-            UpdatedAt = ParseDbDateTime(reader.GetString(19)),
+            CreatedAt = ParseDbDateTime(reader.GetString(21)),
+            UpdatedAt = ParseDbDateTime(reader.GetString(22)),
         };
     }
 
@@ -1002,6 +1341,7 @@ public sealed class SessionStore : ISessionStore
                 Name = "标准协作",
                 Description = "保留人工发送与手动推进，适合日常双栏协作。",
                 IsBuiltIn = true,
+                DefaultPanelPreset = "balanced",
             },
             new LaunchProfile
             {
@@ -1011,6 +1351,7 @@ public sealed class SessionStore : ISessionStore
                 AutomationEnabled = true,
                 AutomationAdvancePolicy = "manual-each-stage",
                 IsBuiltIn = true,
+                DefaultPanelPreset = "automation",
             },
             new LaunchProfile
             {
@@ -1021,6 +1362,7 @@ public sealed class SessionStore : ISessionStore
                 AutomationEnabled = true,
                 AutomationAdvancePolicy = "full-auto-loop",
                 IsBuiltIn = true,
+                DefaultPanelPreset = "automation",
             },
         ];
     }

@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using AiPairLauncher.App.Models;
@@ -42,6 +43,25 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         new() { Value = "eye-care", Label = "护眼" },
     ];
 
+    private static readonly IReadOnlyList<ModeOption> SessionStatusFilters =
+    [
+        new() { Value = "all", Label = "全部状态" },
+        new() { Value = "running", Label = "运行中" },
+        new() { Value = "waiting", Label = "等待中" },
+        new() { Value = "idle", Label = "空闲" },
+        new() { Value = "error", Label = "错误" },
+        new() { Value = "detached", Label = "已断开" },
+    ];
+
+    private static readonly IReadOnlyList<ModeOption> PanelPresetModes =
+    [
+        new() { Value = "balanced", Label = "平衡布局" },
+        new() { Value = "compose", Label = "启动优先" },
+        new() { Value = "automation", Label = "自动编排优先" },
+    ];
+
+    private static readonly string AppVersionValue = ResolveAppVersion();
+
     private readonly StringBuilder _logBuilder = new();
     private readonly List<ManagedSessionRecord> _allSessionRecords = [];
 
@@ -78,7 +98,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string _pendingApprovalAcceptance = "暂无";
     private string _pendingApprovalCodexBrief = "暂无";
     private string _sessionSearchText = string.Empty;
+    private string _selectedSessionStatusFilter = "all";
+    private string _selectedSessionGroupFilter = "__all__";
     private string _sessionCounterSummary = "暂无会话";
+    private string _pendingQueueSummary = "暂无待处理";
+    private string _sessionGroupName = "默认";
     private string _selectedSessionDisplayName = "暂无";
     private string _selectedSessionStatus = "未选择";
     private string _selectedSessionStatusDetail = "从左侧选择一个会话";
@@ -87,13 +111,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string _selectedSessionLastSummary = "暂无";
     private string _selectedSessionModeSummary = "暂无";
     private string _selectedSessionLastError = "暂无";
+    private string _selectedSessionRuntimeSummary = "暂无";
+    private string _selectedSessionBadgeSummary = "暂无";
+    private string _selectedSessionWorktreeSummary = "暂无";
+    private string _selectedSessionPendingSummary = "暂无";
+    private string _selectedSessionClaudePreview = "暂无输出";
+    private string _selectedSessionCodexPreview = "暂无输出";
     private string _selectedSessionLaunchProfileSummary = "未使用模板";
     private string _selectedSessionReconnectSummary = "尚未重连";
+    private string _editableSessionDisplayName = string.Empty;
+    private string _editableSessionGroupName = "默认";
+    private string _lastTransferSummary = "暂无";
+    private string _lastTransferFailure = "暂无";
     private string _selectedLaunchProfileId = string.Empty;
     private string _newLaunchProfileName = string.Empty;
     private string _launchProfileSummary = "使用右侧表单配置创建会话";
     private string _selectedThemeMode = "light";
     private string _themeSummary = "当前主题：白色";
+    private string _panelPreset = "balanced";
     private string _worktreeStrategy = "none";
     private int _rightPanePercent = 60;
     private int _lastLines = 120;
@@ -109,6 +144,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private bool _automationObserverEnabled = true;
     private bool _autoModeEnabled;
     private bool _useWorktree;
+    private bool _showArchivedSessions;
+    private bool _isLaunchPanelExpanded = true;
+    private bool _isAutomationPanelExpanded = true;
+    private bool _isEnvironmentPanelExpanded;
     private bool _isBusy;
     private bool _hasSession;
     private bool _hasPendingApproval;
@@ -120,6 +159,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         {
             _workingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         }
+
+        ApplyPanelPreset(_panelPreset);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -129,6 +170,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public ObservableCollection<ManagedSessionRecord> SessionRecords { get; } = [];
 
     public ObservableCollection<LaunchProfile> LaunchProfiles { get; } = [];
+
+    public ObservableCollection<ModeOption> SessionGroupOptions { get; } =
+    [
+        new ModeOption { Value = "__all__", Label = "全部分组" },
+    ];
+
+    public ObservableCollection<ManagedSessionRecord> PendingSessionRecords { get; } = [];
+
+    public ObservableCollection<AutomationEventRecord> AutomationHistory { get; } = [];
+
+    public string AppVersionText => $"版本 {AppVersionValue}";
 
     public string WorkingDirectory
     {
@@ -203,10 +255,65 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
+    public string SelectedSessionStatusFilter
+    {
+        get => _selectedSessionStatusFilter;
+        set
+        {
+            var normalized = NormalizeSessionStatusFilter(value);
+            if (!SetField(ref _selectedSessionStatusFilter, normalized))
+            {
+                return;
+            }
+
+            ApplySessionFilter();
+        }
+    }
+
+    public string SelectedSessionGroupFilter
+    {
+        get => _selectedSessionGroupFilter;
+        set
+        {
+            if (!SetField(ref _selectedSessionGroupFilter, string.IsNullOrWhiteSpace(value) ? "__all__" : value))
+            {
+                return;
+            }
+
+            ApplySessionFilter();
+        }
+    }
+
+    public bool ShowArchivedSessions
+    {
+        get => _showArchivedSessions;
+        set
+        {
+            if (!SetField(ref _showArchivedSessions, value))
+            {
+                return;
+            }
+
+            ApplySessionFilter();
+        }
+    }
+
     public string SessionCounterSummary
     {
         get => _sessionCounterSummary;
         private set => SetField(ref _sessionCounterSummary, value);
+    }
+
+    public string PendingQueueSummary
+    {
+        get => _pendingQueueSummary;
+        private set => SetField(ref _pendingQueueSummary, value);
+    }
+
+    public string SessionGroupName
+    {
+        get => _sessionGroupName;
+        set => SetField(ref _sessionGroupName, string.IsNullOrWhiteSpace(value) ? "默认" : value.Trim());
     }
 
     public ManagedSessionRecord? SelectedSessionRecord
@@ -221,6 +328,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
             ApplySelectedSessionRecord(value);
             OnPropertyChanged(nameof(HasSelectedSession));
+            OnPropertyChanged(nameof(CanSaveSessionMetadata));
+            OnPropertyChanged(nameof(CanArchiveSelectedSession));
+            OnPropertyChanged(nameof(CanRestoreSelectedSession));
+            OnPropertyChanged(nameof(CanTogglePinSelectedSession));
+            OnPropertyChanged(nameof(CanCopySelectedSessionConfig));
         }
     }
 
@@ -283,6 +395,21 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         get => _themeSummary;
         private set => SetField(ref _themeSummary, value);
+    }
+
+    public string PanelPreset
+    {
+        get => _panelPreset;
+        set
+        {
+            var normalized = NormalizePanelPreset(value);
+            if (!SetField(ref _panelPreset, normalized))
+            {
+                return;
+            }
+
+            ApplyPanelPreset(normalized);
+        }
     }
 
     public bool UseWorktree
@@ -369,6 +496,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         set => SetField(ref _automationObserverEnabled, value);
     }
 
+    public bool IsLaunchPanelExpanded
+    {
+        get => _isLaunchPanelExpanded;
+        set => SetField(ref _isLaunchPanelExpanded, value);
+    }
+
+    public bool IsAutomationPanelExpanded
+    {
+        get => _isAutomationPanelExpanded;
+        set => SetField(ref _isAutomationPanelExpanded, value);
+    }
+
+    public bool IsEnvironmentPanelExpanded
+    {
+        get => _isEnvironmentPanelExpanded;
+        set => SetField(ref _isEnvironmentPanelExpanded, value);
+    }
+
     public string SessionWorkspace
     {
         get => _sessionWorkspace;
@@ -441,6 +586,42 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         private set => SetField(ref _selectedSessionLastError, value);
     }
 
+    public string SelectedSessionRuntimeSummary
+    {
+        get => _selectedSessionRuntimeSummary;
+        private set => SetField(ref _selectedSessionRuntimeSummary, value);
+    }
+
+    public string SelectedSessionBadgeSummary
+    {
+        get => _selectedSessionBadgeSummary;
+        private set => SetField(ref _selectedSessionBadgeSummary, value);
+    }
+
+    public string SelectedSessionWorktreeSummary
+    {
+        get => _selectedSessionWorktreeSummary;
+        private set => SetField(ref _selectedSessionWorktreeSummary, value);
+    }
+
+    public string SelectedSessionPendingSummary
+    {
+        get => _selectedSessionPendingSummary;
+        private set => SetField(ref _selectedSessionPendingSummary, value);
+    }
+
+    public string SelectedSessionClaudePreview
+    {
+        get => _selectedSessionClaudePreview;
+        private set => SetField(ref _selectedSessionClaudePreview, value);
+    }
+
+    public string SelectedSessionCodexPreview
+    {
+        get => _selectedSessionCodexPreview;
+        private set => SetField(ref _selectedSessionCodexPreview, value);
+    }
+
     public string SelectedSessionLaunchProfileSummary
     {
         get => _selectedSessionLaunchProfileSummary;
@@ -451,6 +632,46 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         get => _selectedSessionReconnectSummary;
         set => SetField(ref _selectedSessionReconnectSummary, value);
+    }
+
+    public string EditableSessionDisplayName
+    {
+        get => _editableSessionDisplayName;
+        set
+        {
+            if (!SetField(ref _editableSessionDisplayName, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(CanSaveSessionMetadata));
+        }
+    }
+
+    public string EditableSessionGroupName
+    {
+        get => _editableSessionGroupName;
+        set
+        {
+            if (!SetField(ref _editableSessionGroupName, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(CanSaveSessionMetadata));
+        }
+    }
+
+    public string LastTransferSummary
+    {
+        get => _lastTransferSummary;
+        private set => SetField(ref _lastTransferSummary, value);
+    }
+
+    public string LastTransferFailure
+    {
+        get => _lastTransferFailure;
+        private set => SetField(ref _lastTransferFailure, value);
     }
 
     public string StatusMessage
@@ -596,6 +817,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanApproveAutomation));
             OnPropertyChanged(nameof(CanRejectAutomation));
             OnPropertyChanged(nameof(CanStopAutomation));
+            OnPropertyChanged(nameof(CanSaveSessionMetadata));
+            OnPropertyChanged(nameof(CanArchiveSelectedSession));
+            OnPropertyChanged(nameof(CanRestoreSelectedSession));
+            OnPropertyChanged(nameof(CanTogglePinSelectedSession));
+            OnPropertyChanged(nameof(CanCopySelectedSessionConfig));
         }
     }
 
@@ -668,6 +894,22 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool CanFocusSelectedSession => !IsBusy && HasSelectedSession;
 
+    public bool CanSaveSessionMetadata =>
+        !IsBusy &&
+        HasSelectedSession &&
+        !string.IsNullOrWhiteSpace(EditableSessionDisplayName) &&
+        !string.IsNullOrWhiteSpace(EditableSessionGroupName);
+
+    public bool CanArchiveSelectedSession => !IsBusy && HasSelectedSession && !SelectedSessionRecord!.IsArchived;
+
+    public bool CanRestoreSelectedSession => !IsBusy && HasSelectedSession && SelectedSessionRecord!.IsArchived;
+
+    public bool CanTogglePinSelectedSession => !IsBusy && HasSelectedSession;
+
+    public bool CanCopySelectedSessionConfig => !IsBusy && HasSelectedSession;
+
+    public bool HasPendingSessions => PendingSessionRecords.Count > 0;
+
     public IReadOnlyList<ModeOption> ClaudeModeOptions => ClaudeModes;
 
     public IReadOnlyList<ModeOption> CodexModeOptions => CodexModes;
@@ -677,6 +919,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public IReadOnlyList<ModeOption> WorktreeStrategyOptions => WorktreeStrategies;
 
     public IReadOnlyList<ModeOption> ThemeOptions => ThemeModes;
+
+    public IReadOnlyList<ModeOption> SessionStatusFilterOptions => SessionStatusFilters;
+
+    public IReadOnlyList<ModeOption> PanelPresetOptions => PanelPresetModes;
 
     public AutomationAdvancePolicy SelectedAutomationAdvancePolicy => ParseAutomationAdvancePolicy(_automationAdvancePolicy);
 
@@ -742,6 +988,65 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
+    public void ReplaceAutomationHistory(IEnumerable<AutomationEventRecord> events)
+    {
+        AutomationHistory.Clear();
+        foreach (var item in events.OrderByDescending(static entry => entry.OccurredAt))
+        {
+            AutomationHistory.Add(item);
+        }
+    }
+
+    public ManagedSessionRecord? SelectSessionById(string sessionId)
+    {
+        var record = SessionRecords.FirstOrDefault(item => string.Equals(item.SessionId, sessionId, StringComparison.Ordinal));
+        if (record is null)
+        {
+            return null;
+        }
+
+        SelectedSessionRecord = record;
+        return record;
+    }
+
+    public ManagedSessionRecord? FindSessionById(string sessionId)
+    {
+        return _allSessionRecords.FirstOrDefault(item => string.Equals(item.SessionId, sessionId, StringComparison.Ordinal));
+    }
+
+    public ManagedSessionRecord? ApplySelectedSessionToLaunchForm()
+    {
+        var record = SelectedSessionRecord;
+        if (record is null)
+        {
+            return null;
+        }
+
+        WorkingDirectory = record.Session.WorkingDirectory;
+        WorkspaceName = record.Session.Workspace;
+        SessionGroupName = record.GroupName;
+        ClaudePermissionMode = record.Session.ClaudePermissionMode;
+        CodexMode = record.Session.CodexMode;
+        RightPanePercent = record.Session.RightPanePercent;
+        AutoModeEnabled = record.Session.AutomationEnabledAtLaunch;
+        AutomationObserverEnabled = record.Session.AutomationObserverEnabled;
+        UseWorktree = record.UsesWorktree;
+        WorktreeStrategy = record.UsesWorktree ? "subdirectory" : "none";
+        LaunchProfileSummary = $"已从会话 {record.DisplayName} 复制启动配置";
+        return record;
+    }
+
+    public void RecordTransferSuccess(ContextTransferResult result)
+    {
+        LastTransferSummary = $"{result.SourcePaneId} -> {result.TargetPaneId}，抓取 {result.LastLines} 行，字符数 {result.CapturedLength}";
+        LastTransferFailure = "暂无";
+    }
+
+    public void RecordTransferFailure(string errorMessage)
+    {
+        LastTransferFailure = DisplayOrPlaceholder(errorMessage);
+    }
+
     public LaunchProfile? ApplyLaunchProfile()
     {
         var profile = SelectedLaunchProfile;
@@ -760,6 +1065,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             WorkspaceName = profile.WorkspacePrefix;
         }
 
+        SessionGroupName = profile.DefaultGroupName;
+        TransferInstruction = profile.TransferInstructionTemplate;
+        PanelPreset = profile.DefaultPanelPreset;
         ClaudePermissionMode = profile.ClaudePermissionMode;
         CodexMode = profile.CodexMode;
         RightPanePercent = profile.RightPanePercent;
@@ -788,6 +1096,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             Description = "从当前新建会话表单保存",
             WorkingDirectory = WorkingDirectory,
             WorkspacePrefix = WorkspaceName,
+            DefaultGroupName = SessionGroupName,
+            TransferInstructionTemplate = TransferInstruction,
+            DefaultPanelPreset = PanelPreset,
             ClaudePermissionMode = ClaudePermissionMode,
             CodexMode = CodexMode,
             RightPanePercent = RightPanePercent,
@@ -902,9 +1213,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         var keyword = _sessionSearchText.Trim();
         var filteredRecords = _allSessionRecords
-            .Where(record => MatchesSessionFilter(record, keyword))
+            .Where(record => MatchesSessionFilter(record, keyword, _selectedSessionStatusFilter, _selectedSessionGroupFilter, _showArchivedSessions))
             .OrderByDescending(static record => record.IsPinned)
-            .ThenByDescending(static record => !record.IsArchived)
+            .ThenBy(static record => record.GroupName, StringComparer.OrdinalIgnoreCase)
             .ThenByDescending(static record => record.LastSeenAt)
             .ToArray();
 
@@ -914,9 +1225,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             SessionRecords.Add(record);
         }
 
-        SessionCounterSummary = _allSessionRecords.Count == 0
+        UpdateSessionGroupOptions();
+        UpdatePendingQueue();
+
+        var visibleSourceCount = _showArchivedSessions ? _allSessionRecords.Count : _allSessionRecords.Count(static record => !record.IsArchived);
+        SessionCounterSummary = visibleSourceCount == 0
             ? "暂无会话"
-            : $"{filteredRecords.Length} / {_allSessionRecords.Count} 个会话";
+            : $"{filteredRecords.Length} / {visibleSourceCount} 个会话";
 
         var currentSessionId = preferredSessionId ?? _selectedSessionRecord?.SessionId;
         var selectedRecord = filteredRecords.FirstOrDefault(record =>
@@ -938,6 +1253,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             SelectedSessionLastSummary = "暂无";
             SelectedSessionModeSummary = "暂无";
             SelectedSessionLastError = "暂无";
+            SelectedSessionRuntimeSummary = "暂无";
+            SelectedSessionBadgeSummary = "暂无";
+            SelectedSessionWorktreeSummary = "暂无";
+            SelectedSessionPendingSummary = "暂无";
+            SelectedSessionClaudePreview = "暂无输出";
+            SelectedSessionCodexPreview = "暂无输出";
+            EditableSessionDisplayName = string.Empty;
+            EditableSessionGroupName = "默认";
             ApplySession(null);
             return;
         }
@@ -950,16 +1273,44 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         SelectedSessionLastSummary = DisplayOrPlaceholder(record.LastSummary);
         SelectedSessionModeSummary = record.ModeSummary;
         SelectedSessionLastError = DisplayOrPlaceholder(record.LastError);
+        SelectedSessionRuntimeSummary = BuildRuntimeSummary(record);
+        SelectedSessionBadgeSummary = record.BadgeSummary;
+        SelectedSessionWorktreeSummary = record.UsesWorktree
+            ? $"当前会话位于受管 worktree: {record.Session.WorkingDirectory}"
+            : "当前会话使用主工作目录";
+        SelectedSessionPendingSummary = record.PendingActionCount == 0
+            ? "当前没有待处理事项"
+            : $"当前会话共有 {record.PendingActionCount} 项待处理";
+        SelectedSessionClaudePreview = DisplayOrPlaceholder(record.StatusSnapshot.ClaudePreview);
+        SelectedSessionCodexPreview = DisplayOrPlaceholder(record.StatusSnapshot.CodexPreview);
         SelectedSessionLaunchProfileSummary = ResolveLaunchProfileSummary(record.LaunchProfileId);
         SelectedSessionReconnectSummary = record.RuntimeBinding.IsAlive
             ? "当前绑定在线"
             : "当前绑定已失效，等待手动重连";
+        EditableSessionDisplayName = record.DisplayName;
+        EditableSessionGroupName = record.GroupName;
         ApplySession(record.Session);
     }
 
-    private static bool MatchesSessionFilter(ManagedSessionRecord record, string keyword)
+    private bool MatchesSessionFilter(
+        ManagedSessionRecord record,
+        string keyword,
+        string statusFilter,
+        string groupFilter,
+        bool showArchivedSessions)
     {
-        if (record.IsArchived)
+        if (!showArchivedSessions && record.IsArchived)
+        {
+            return false;
+        }
+
+        if (!string.Equals(groupFilter, "__all__", StringComparison.Ordinal) &&
+            !string.Equals(record.GroupName, groupFilter, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!IsStatusMatch(record, statusFilter))
         {
             return false;
         }
@@ -975,6 +1326,71 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                || ContainsIgnoreCase(record.Session.WorkingDirectory, keyword)
                || ContainsIgnoreCase(record.LastSummary, keyword)
                || ContainsIgnoreCase(record.HealthDetail, keyword);
+    }
+
+    private void UpdateSessionGroupOptions()
+    {
+        var groups = _allSessionRecords
+            .Where(record => _showArchivedSessions || !record.IsArchived)
+            .Select(record => string.IsNullOrWhiteSpace(record.GroupName) ? "默认" : record.GroupName.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static group => group, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        SessionGroupOptions.Clear();
+        SessionGroupOptions.Add(new ModeOption { Value = "__all__", Label = "全部分组" });
+        foreach (var group in groups)
+        {
+            SessionGroupOptions.Add(new ModeOption { Value = group, Label = group });
+        }
+
+        if (!_selectedSessionGroupFilter.Equals("__all__", StringComparison.Ordinal) &&
+            SessionGroupOptions.All(option => !string.Equals(option.Value, _selectedSessionGroupFilter, StringComparison.Ordinal)))
+        {
+            _selectedSessionGroupFilter = "__all__";
+            OnPropertyChanged(nameof(SelectedSessionGroupFilter));
+        }
+    }
+
+    private void UpdatePendingQueue()
+    {
+        var pending = _allSessionRecords
+            .Where(static record => !record.IsArchived)
+            .Where(static record => record.PendingActionCount > 0)
+            .OrderByDescending(static record => record.StatusSnapshot.NeedsApproval)
+            .ThenByDescending(static record => record.LastSeenAt)
+            .Take(8)
+            .ToArray();
+
+        PendingSessionRecords.Clear();
+        foreach (var record in pending)
+        {
+            PendingSessionRecords.Add(record);
+        }
+
+        PendingQueueSummary = pending.Length == 0
+            ? "暂无待处理"
+            : $"待处理 {pending.Length} 项";
+        OnPropertyChanged(nameof(HasPendingSessions));
+    }
+
+    private static bool IsStatusMatch(ManagedSessionRecord record, string statusFilter)
+    {
+        return NormalizeSessionStatusFilter(statusFilter) switch
+        {
+            "running" => record.HealthStatus == SessionHealthStatus.Running,
+            "waiting" => record.HealthStatus == SessionHealthStatus.Waiting,
+            "idle" => record.HealthStatus == SessionHealthStatus.Idle,
+            "error" => record.HealthStatus == SessionHealthStatus.Error,
+            "detached" => record.HealthStatus == SessionHealthStatus.Detached,
+            _ => true,
+        };
+    }
+
+    private static string BuildRuntimeSummary(ManagedSessionRecord record)
+    {
+        var runtime = record.RuntimeBinding.IsAlive ? "在线" : "失效";
+        return $"GUI {record.RuntimeBinding.GuiPid} · Left {record.RuntimeBinding.LeftPaneId} · Right {record.RuntimeBinding.RightPaneId} · {runtime}";
     }
 
     private static bool ContainsIgnoreCase(string? source, string keyword)
@@ -1008,6 +1424,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private static string DisplayOrPlaceholder(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? "暂无" : value.Trim();
+    }
+
+    private static string ResolveAppVersion()
+    {
+        var assembly = typeof(MainWindowViewModel).Assembly;
+        var informationalVersion = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+        var cleanVersion = informationalVersion?.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault();
+
+        if (!string.IsNullOrWhiteSpace(cleanVersion))
+        {
+            return cleanVersion;
+        }
+
+        var version = assembly.GetName().Version;
+        return version is null ? "未知版本" : $"{version.Major}.{version.Minor}.{version.Build}";
     }
 
     private static string BuildSessionPaneInfo(LauncherSession session)
@@ -1087,6 +1521,52 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         };
     }
 
+    private static string NormalizeSessionStatusFilter(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "running" => "running",
+            "waiting" => "waiting",
+            "idle" => "idle",
+            "error" => "error",
+            "detached" => "detached",
+            _ => "all",
+        };
+    }
+
+    private static string NormalizePanelPreset(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "compose" => "compose",
+            "automation" => "automation",
+            _ => "balanced",
+        };
+    }
+
+    private void ApplyPanelPreset(string preset)
+    {
+        var normalized = NormalizePanelPreset(preset);
+        switch (normalized)
+        {
+            case "compose":
+                IsLaunchPanelExpanded = true;
+                IsAutomationPanelExpanded = false;
+                IsEnvironmentPanelExpanded = false;
+                break;
+            case "automation":
+                IsLaunchPanelExpanded = false;
+                IsAutomationPanelExpanded = true;
+                IsEnvironmentPanelExpanded = false;
+                break;
+            default:
+                IsLaunchPanelExpanded = true;
+                IsAutomationPanelExpanded = true;
+                IsEnvironmentPanelExpanded = true;
+                break;
+        }
+    }
+
     private static AutomationAdvancePolicy ParseAutomationAdvancePolicy(string value)
     {
         return NormalizeAutomationAdvancePolicy(value) switch
@@ -1105,7 +1585,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         var profile = SelectedLaunchProfile;
         LaunchProfileSummary = profile is null
             ? "使用右侧表单配置创建会话"
-            : $"{profile.Name} / Claude {profile.ClaudePermissionMode} / Codex {profile.CodexMode}";
+            : $"{profile.Name} / 分组 {profile.DefaultGroupName} / Claude {profile.ClaudePermissionMode} / Codex {profile.CodexMode}";
     }
 
     private string ResolveLaunchProfileSummary(string? launchProfileId)
