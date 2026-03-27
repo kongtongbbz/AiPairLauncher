@@ -28,6 +28,15 @@ public enum AutomationAdvancePolicy
     FullAutoLoop,
 }
 
+public enum AutomationPhase
+{
+    None,
+    Phase1Research,
+    Phase2Planning,
+    Phase3Execution,
+    Phase4Review,
+}
+
 public enum AutomationStageStatus
 {
     Idle,
@@ -46,4 +55,13 @@ public enum PacketParseStatus
     NoPacket,
     Success,
     Invalid,
+}
+
+public enum TaskMdStatus
+{
+    Unknown,
+    PendingPlan,
+    Planned,
+    InProgress,
+    Done,
 }

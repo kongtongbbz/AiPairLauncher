@@ -105,7 +105,16 @@ public sealed class AgentPacketParser : IAgentPacketParser
 
         var role = ParseRole(GetRequiredScalar(scalarValues, "role"));
         var kind = ParseKind(GetRequiredScalar(scalarValues, "kind"));
+        var phase = scalarValues.TryGetValue("phase", out var phaseValue)
+            ? ParsePhase(phaseValue)
+            : AutomationPhase.None;
         var stageId = ParseStageId(GetRequiredScalar(scalarValues, "stage_id"));
+        var subagent = scalarValues.TryGetValue("subagent", out var subagentValue) ? subagentValue.Trim() : null;
+        var taskRef = scalarValues.TryGetValue("task_ref", out var taskRefValue) ? taskRefValue.Trim() : null;
+        var parallelGroup = scalarValues.TryGetValue("parallel_group", out var parallelGroupValue) ? parallelGroupValue.Trim() : null;
+        int? retryCount = scalarValues.TryGetValue("retry_count", out var retryCountValue)
+            ? ParseNullableInt(retryCountValue, "retry_count")
+            : null;
         var title = GetSectionOrScalar(sectionValues, scalarValues, "title");
         var summary = GetSectionOrScalar(sectionValues, scalarValues, "summary");
         var scope = GetSectionOrScalar(sectionValues, scalarValues, "scope");
@@ -115,9 +124,16 @@ public sealed class AgentPacketParser : IAgentPacketParser
             : null;
         var steps = ParseList(sectionValues, scalarValues, "steps");
         var acceptanceCriteria = ParseList(sectionValues, scalarValues, "acceptance");
+        var taskProgress = ParseList(sectionValues, scalarValues, "task_progress");
         var completedItems = ParseList(sectionValues, scalarValues, "completed");
         var verificationItems = ParseList(sectionValues, scalarValues, "verification");
         var blockers = ParseList(sectionValues, scalarValues, "blockers");
+        var taskMdPath = scalarValues.TryGetValue("task_md_path", out var taskMdPathValue)
+            ? taskMdPathValue.Trim()
+            : null;
+        var taskMdStatus = scalarValues.TryGetValue("task_md_status", out var taskMdStatusValue)
+            ? ParseTaskMdStatus(taskMdStatusValue)
+            : TaskMdStatus.Unknown;
         var reviewFocus = GetSectionOrScalar(sectionValues, scalarValues, "review_focus");
         var body = GetSectionOrScalar(sectionValues, scalarValues, "body");
         var codexBrief = GetSectionOrScalar(sectionValues, scalarValues, "codex_brief");
@@ -126,11 +142,21 @@ public sealed class AgentPacketParser : IAgentPacketParser
         {
             Role = role,
             Kind = kind,
+            Phase = phase,
             StageId = stageId,
+            Subagent = string.IsNullOrWhiteSpace(subagent) ? null : subagent,
+            TaskRef = string.IsNullOrWhiteSpace(taskRef) ? null : taskRef,
+            ParallelGroup = string.IsNullOrWhiteSpace(parallelGroup) ? null : parallelGroup,
+            RetryCount = retryCount,
             Fingerprint = ComputeSemanticFingerprint(
                 role,
                 kind,
+                phase,
                 stageId,
+                subagent,
+                taskRef,
+                parallelGroup,
+                retryCount,
                 status,
                 decision,
                 title,
@@ -138,9 +164,12 @@ public sealed class AgentPacketParser : IAgentPacketParser
                 scope,
                 steps,
                 acceptanceCriteria,
+                taskProgress,
                 completedItems,
                 verificationItems,
                 blockers,
+                taskMdPath,
+                taskMdStatus,
                 reviewFocus,
                 body,
                 codexBrief),
@@ -148,8 +177,11 @@ public sealed class AgentPacketParser : IAgentPacketParser
             Title = title,
             Summary = summary,
             Scope = scope,
+            TaskProgress = taskProgress,
             Status = status,
             Decision = decision,
+            TaskMdPath = string.IsNullOrWhiteSpace(taskMdPath) ? null : taskMdPath,
+            TaskMdStatus = taskMdStatus,
             Steps = steps,
             AcceptanceCriteria = acceptanceCriteria,
             CompletedItems = completedItems,
@@ -203,7 +235,12 @@ public sealed class AgentPacketParser : IAgentPacketParser
     private static string ComputeSemanticFingerprint(
         AgentRole role,
         PacketKind kind,
+        AutomationPhase phase,
         int stageId,
+        string? subagent,
+        string? taskRef,
+        string? parallelGroup,
+        int? retryCount,
         string? status,
         ReviewDecision? decision,
         string title,
@@ -211,9 +248,12 @@ public sealed class AgentPacketParser : IAgentPacketParser
         string scope,
         IReadOnlyList<string> steps,
         IReadOnlyList<string> acceptanceCriteria,
+        IReadOnlyList<string> taskProgress,
         IReadOnlyList<string> completedItems,
         IReadOnlyList<string> verificationItems,
         IReadOnlyList<string> blockers,
+        string? taskMdPath,
+        TaskMdStatus taskMdStatus,
         string reviewFocus,
         string body,
         string codexBrief)
@@ -222,7 +262,12 @@ public sealed class AgentPacketParser : IAgentPacketParser
             "|",
             role,
             kind,
+            phase,
             stageId.ToString(CultureInfo.InvariantCulture),
+            NormalizeWhitespace(subagent),
+            NormalizeWhitespace(taskRef),
+            NormalizeWhitespace(parallelGroup),
+            retryCount?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
             NormalizeWhitespace(status),
             decision?.ToString() ?? string.Empty,
             NormalizeWhitespace(title),
@@ -230,9 +275,12 @@ public sealed class AgentPacketParser : IAgentPacketParser
             NormalizeWhitespace(scope),
             NormalizeList(steps),
             NormalizeList(acceptanceCriteria),
+            NormalizeList(taskProgress),
             NormalizeList(completedItems),
             NormalizeList(verificationItems),
             NormalizeList(blockers),
+            NormalizeWhitespace(taskMdPath),
+            taskMdStatus,
             NormalizeWhitespace(reviewFocus),
             NormalizeWhitespace(body),
             NormalizeWhitespace(codexBrief));
@@ -355,6 +403,40 @@ public sealed class AgentPacketParser : IAgentPacketParser
         }
 
         throw new FormatException($"stage_id 非法: {value}");
+    }
+
+    private static AutomationPhase ParsePhase(string value)
+    {
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "phase1_research" => AutomationPhase.Phase1Research,
+            "phase2_planning" => AutomationPhase.Phase2Planning,
+            "phase3_execution" => AutomationPhase.Phase3Execution,
+            "phase4_review" => AutomationPhase.Phase4Review,
+            _ => throw new FormatException($"未知 phase: {value}"),
+        };
+    }
+
+    private static TaskMdStatus ParseTaskMdStatus(string value)
+    {
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "pending_plan" => TaskMdStatus.PendingPlan,
+            "planned" => TaskMdStatus.Planned,
+            "in_progress" => TaskMdStatus.InProgress,
+            "done" => TaskMdStatus.Done,
+            _ => throw new FormatException($"未知 task_md_status: {value}"),
+        };
+    }
+
+    private static int ParseNullableInt(string value, string fieldName)
+    {
+        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new FormatException($"{fieldName} 非法: {value}");
     }
 
     private static string NormalizeKey(string value)

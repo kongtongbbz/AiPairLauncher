@@ -6,9 +6,17 @@ public sealed class AutomationEventRecord
 
     public string SessionId { get; init; } = string.Empty;
 
+    public AutomationPhase Phase { get; init; } = AutomationPhase.None;
+
     public AutomationStageStatus Status { get; init; } = AutomationStageStatus.Idle;
 
     public int? StageId { get; init; }
+
+    public string? TaskRef { get; init; }
+
+    public string? TaskMdPath { get; init; }
+
+    public TaskMdStatus TaskMdStatus { get; init; } = TaskMdStatus.Unknown;
 
     public string StatusDetail { get; init; } = string.Empty;
 
@@ -45,8 +53,12 @@ public sealed class AutomationEventRecord
         return new AutomationEventRecord
         {
             SessionId = sessionId,
+            Phase = state.Phase,
             Status = state.Status,
             StageId = state.CurrentStageId,
+            TaskRef = state.CurrentTaskRef,
+            TaskMdPath = state.TaskMdPath,
+            TaskMdStatus = state.TaskMdStatus,
             StatusDetail = state.StatusDetail,
             LastPacketSummary = state.LastPacketSummary,
             LastError = state.LastError,
