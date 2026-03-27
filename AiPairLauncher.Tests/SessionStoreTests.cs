@@ -157,16 +157,24 @@ public sealed class SessionStoreTests : IDisposable
             },
             State = new AutomationRunState
             {
+                Phase = AutomationPhase.Phase2Planning,
                 Status = AutomationStageStatus.PendingUserApproval,
                 CurrentStageId = 2,
+                CurrentTaskRef = "T2.1",
                 StatusDetail = "等待人工审批",
                 LastPacketSummary = "阶段二计划已生成",
+                TaskMdPath = @"D:\repo\task.md",
+                TaskMdStatus = TaskMdStatus.Planned,
                 PendingApproval = new ApprovalDraft
                 {
+                    Phase = AutomationPhase.Phase2Planning,
                     StageId = 2,
+                    TaskRef = "T2.1",
                     Title = "阶段二",
                     Summary = "补齐验证",
                     Scope = "仅测试",
+                    TaskMdPath = @"D:\repo\task.md",
+                    TaskMdStatus = TaskMdStatus.Planned,
                     CodexBrief = "执行验证",
                 },
             },
@@ -176,8 +184,12 @@ public sealed class SessionStoreTests : IDisposable
         await store.SaveAutomationEventAsync(new AutomationEventRecord
         {
             SessionId = session.SessionId,
+            Phase = AutomationPhase.Phase2Planning,
             Status = AutomationStageStatus.PendingUserApproval,
             StageId = 2,
+            TaskRef = "T2.1",
+            TaskMdPath = @"D:\repo\task.md",
+            TaskMdStatus = TaskMdStatus.Planned,
             StatusDetail = "等待人工审批",
             LastPacketSummary = "阶段二计划已生成",
         });
@@ -187,9 +199,15 @@ public sealed class SessionStoreTests : IDisposable
 
         Assert.NotNull(loadedSnapshot);
         Assert.Equal(AutomationStageStatus.PendingUserApproval, loadedSnapshot!.State.Status);
+        Assert.Equal(AutomationPhase.Phase2Planning, loadedSnapshot.State.Phase);
         Assert.Equal(2, loadedSnapshot.State.CurrentStageId);
+        Assert.Equal("T2.1", loadedSnapshot.State.CurrentTaskRef);
+        Assert.Equal(TaskMdStatus.Planned, loadedSnapshot.State.TaskMdStatus);
         Assert.Single(events);
         Assert.Equal("阶段二计划已生成", events[0].LastPacketSummary);
+        Assert.Equal(AutomationPhase.Phase2Planning, events[0].Phase);
+        Assert.Equal("T2.1", events[0].TaskRef);
+        Assert.Equal(TaskMdStatus.Planned, events[0].TaskMdStatus);
     }
 
     [Fact(DisplayName = "test_builtin_launch_profiles_are_listed_in_selector")]

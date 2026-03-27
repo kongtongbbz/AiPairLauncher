@@ -192,20 +192,24 @@ public sealed class SessionStore : ISessionStore
         command.CommandText =
             """
             INSERT INTO automation_events (
-                event_id, session_id, status, stage_id, status_detail, last_packet_summary,
+                event_id, session_id, phase, status, stage_id, task_ref, task_md_path, task_md_status, status_detail, last_packet_summary,
                 last_error, intervention_reason, pending_approval_json,
                 auto_approved_stage_count, current_stage_retry_count, occurred_at
             )
             VALUES (
-                $event_id, $session_id, $status, $stage_id, $status_detail, $last_packet_summary,
+                $event_id, $session_id, $phase, $status, $stage_id, $task_ref, $task_md_path, $task_md_status, $status_detail, $last_packet_summary,
                 $last_error, $intervention_reason, $pending_approval_json,
                 $auto_approved_stage_count, $current_stage_retry_count, $occurred_at
             );
             """;
         AddParameter(command, "$event_id", eventRecord.EventId);
         AddParameter(command, "$session_id", eventRecord.SessionId);
+        AddParameter(command, "$phase", eventRecord.Phase.ToString());
         AddParameter(command, "$status", eventRecord.Status.ToString());
         AddParameter(command, "$stage_id", eventRecord.StageId);
+        AddParameter(command, "$task_ref", eventRecord.TaskRef);
+        AddParameter(command, "$task_md_path", eventRecord.TaskMdPath);
+        AddParameter(command, "$task_md_status", eventRecord.TaskMdStatus.ToString());
         AddParameter(command, "$status_detail", eventRecord.StatusDetail);
         AddParameter(command, "$last_packet_summary", eventRecord.LastPacketSummary);
         AddParameter(command, "$last_error", eventRecord.LastError);
@@ -231,7 +235,7 @@ public sealed class SessionStore : ISessionStore
         command.CommandText =
             """
             SELECT
-                event_id, session_id, status, stage_id, status_detail, last_packet_summary,
+                event_id, session_id, phase, status, stage_id, task_ref, task_md_path, task_md_status, status_detail, last_packet_summary,
                 last_error, intervention_reason, pending_approval_json,
                 auto_approved_stage_count, current_stage_retry_count, occurred_at
             FROM automation_events
@@ -250,16 +254,20 @@ public sealed class SessionStore : ISessionStore
             {
                 EventId = reader.GetString(0),
                 SessionId = reader.GetString(1),
-                Status = Enum.TryParse<AutomationStageStatus>(reader.GetString(2), out var status) ? status : AutomationStageStatus.Idle,
-                StageId = ReadNullableInt(reader, 3),
-                StatusDetail = reader.GetString(4),
-                LastPacketSummary = reader.GetString(5),
-                LastError = ReadNullableString(reader, 6),
-                InterventionReason = ReadNullableString(reader, 7),
-                PendingApproval = DeserializeJson<ApprovalDraft>(ReadNullableString(reader, 8)),
-                AutoApprovedStageCount = reader.GetInt32(9),
-                CurrentStageRetryCount = reader.GetInt32(10),
-                OccurredAt = ParseDbDateTime(reader.GetString(11)),
+                Phase = ParseAutomationPhase(ReadNullableString(reader, 2)),
+                Status = Enum.TryParse<AutomationStageStatus>(reader.GetString(3), out var status) ? status : AutomationStageStatus.Idle,
+                StageId = ReadNullableInt(reader, 4),
+                TaskRef = ReadNullableString(reader, 5),
+                TaskMdPath = ReadNullableString(reader, 6),
+                TaskMdStatus = ParseTaskMdStatus(ReadNullableString(reader, 7)),
+                StatusDetail = reader.GetString(8),
+                LastPacketSummary = reader.GetString(9),
+                LastError = ReadNullableString(reader, 10),
+                InterventionReason = ReadNullableString(reader, 11),
+                PendingApproval = DeserializeJson<ApprovalDraft>(ReadNullableString(reader, 12)),
+                AutoApprovedStageCount = reader.GetInt32(13),
+                CurrentStageRetryCount = reader.GetInt32(14),
+                OccurredAt = ParseDbDateTime(reader.GetString(15)),
             });
         }
 
@@ -641,7 +649,11 @@ public sealed class SessionStore : ISessionStore
                 claude_preview TEXT NOT NULL DEFAULT '暂无输出',
                 codex_preview TEXT NOT NULL DEFAULT '暂无输出',
                 needs_approval INTEGER NOT NULL,
+                automation_phase TEXT NOT NULL DEFAULT 'None',
                 automation_stage_id INTEGER NULL,
+                automation_task_ref TEXT NULL,
+                task_md_path TEXT NULL,
+                task_md_status TEXT NOT NULL DEFAULT 'Unknown',
                 automation_retry_count INTEGER NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
@@ -676,8 +688,12 @@ public sealed class SessionStore : ISessionStore
             CREATE TABLE IF NOT EXISTS automation_events (
                 event_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
+                phase TEXT NOT NULL DEFAULT 'None',
                 status TEXT NOT NULL,
                 stage_id INTEGER NULL,
+                task_ref TEXT NULL,
+                task_md_path TEXT NULL,
+                task_md_status TEXT NOT NULL DEFAULT 'Unknown',
                 status_detail TEXT NOT NULL,
                 last_packet_summary TEXT NOT NULL,
                 last_error TEXT NULL,
@@ -705,6 +721,14 @@ public sealed class SessionStore : ISessionStore
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "session_status_snapshots", "claude_preview", "TEXT NOT NULL DEFAULT '暂无输出'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "session_status_snapshots", "codex_preview", "TEXT NOT NULL DEFAULT '暂无输出'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "automation_phase", "TEXT NOT NULL DEFAULT 'None'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "automation_task_ref", "TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "task_md_path", "TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "task_md_status", "TEXT NOT NULL DEFAULT 'Unknown'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "automation_events", "phase", "TEXT NOT NULL DEFAULT 'None'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "automation_events", "task_ref", "TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "automation_events", "task_md_path", "TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "automation_events", "task_md_status", "TEXT NOT NULL DEFAULT 'Unknown'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "launch_profiles", "default_group_name", "TEXT NOT NULL DEFAULT '默认'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "launch_profiles", "transfer_instruction_template", "TEXT NOT NULL DEFAULT '请基于下面这段终端输出继续处理。先给出结论，再给出下一步动作。'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "launch_profiles", "default_panel_preset", "TEXT NOT NULL DEFAULT 'balanced'", cancellationToken).ConfigureAwait(false);
@@ -796,7 +820,7 @@ public sealed class SessionStore : ISessionStore
                 r.codex_observer_pane_id, r.is_alive, r.updated_at,
                 p.status, p.status_detail, p.last_activity_at, p.last_error, p.last_summary,
                 p.claude_preview, p.codex_preview,
-                p.needs_approval, p.automation_stage_id, p.automation_retry_count, p.updated_at
+                p.needs_approval, p.automation_phase, p.automation_stage_id, p.automation_task_ref, p.task_md_path, p.task_md_status, p.automation_retry_count, p.updated_at
             FROM sessions s
             LEFT JOIN session_runtime_bindings r ON r.session_id = s.session_id
             LEFT JOIN session_status_snapshots p ON p.session_id = s.session_id
@@ -835,7 +859,7 @@ public sealed class SessionStore : ISessionStore
                 r.codex_observer_pane_id, r.is_alive, r.updated_at,
                 p.status, p.status_detail, p.last_activity_at, p.last_error, p.last_summary,
                 p.claude_preview, p.codex_preview,
-                p.needs_approval, p.automation_stage_id, p.automation_retry_count, p.updated_at
+                p.needs_approval, p.automation_phase, p.automation_stage_id, p.automation_task_ref, p.task_md_path, p.task_md_status, p.automation_retry_count, p.updated_at
             FROM sessions s
             LEFT JOIN session_runtime_bindings r ON r.session_id = s.session_id
             LEFT JOIN session_status_snapshots p ON p.session_id = s.session_id
@@ -980,11 +1004,11 @@ public sealed class SessionStore : ISessionStore
             """
             INSERT INTO session_status_snapshots (
                 session_id, status, status_detail, last_activity_at, last_error,
-                last_summary, claude_preview, codex_preview, needs_approval, automation_stage_id, automation_retry_count, updated_at
+                last_summary, claude_preview, codex_preview, needs_approval, automation_phase, automation_stage_id, automation_task_ref, task_md_path, task_md_status, automation_retry_count, updated_at
             )
             VALUES (
                 $session_id, $status, $status_detail, $last_activity_at, $last_error,
-                $last_summary, $claude_preview, $codex_preview, $needs_approval, $automation_stage_id, $automation_retry_count, $updated_at
+                $last_summary, $claude_preview, $codex_preview, $needs_approval, $automation_phase, $automation_stage_id, $automation_task_ref, $task_md_path, $task_md_status, $automation_retry_count, $updated_at
             )
             ON CONFLICT(session_id) DO UPDATE SET
                 status = excluded.status,
@@ -995,7 +1019,11 @@ public sealed class SessionStore : ISessionStore
                 claude_preview = excluded.claude_preview,
                 codex_preview = excluded.codex_preview,
                 needs_approval = excluded.needs_approval,
+                automation_phase = excluded.automation_phase,
                 automation_stage_id = excluded.automation_stage_id,
+                automation_task_ref = excluded.automation_task_ref,
+                task_md_path = excluded.task_md_path,
+                task_md_status = excluded.task_md_status,
                 automation_retry_count = excluded.automation_retry_count,
                 updated_at = excluded.updated_at;
             """;
@@ -1008,7 +1036,11 @@ public sealed class SessionStore : ISessionStore
         AddParameter(snapshotCommand, "$claude_preview", record.StatusSnapshot.ClaudePreview);
         AddParameter(snapshotCommand, "$codex_preview", record.StatusSnapshot.CodexPreview);
         AddParameter(snapshotCommand, "$needs_approval", record.StatusSnapshot.NeedsApproval);
+        AddParameter(snapshotCommand, "$automation_phase", record.StatusSnapshot.AutomationPhase.ToString());
         AddParameter(snapshotCommand, "$automation_stage_id", record.StatusSnapshot.AutomationStageId);
+        AddParameter(snapshotCommand, "$automation_task_ref", record.StatusSnapshot.AutomationTaskRef);
+        AddParameter(snapshotCommand, "$task_md_path", record.StatusSnapshot.TaskMdPath);
+        AddParameter(snapshotCommand, "$task_md_status", record.StatusSnapshot.TaskMdStatus.ToString());
         AddParameter(snapshotCommand, "$automation_retry_count", record.StatusSnapshot.AutomationRetryCount);
         AddParameter(snapshotCommand, "$updated_at", ToDbString(record.UpdatedAt == default ? DateTimeOffset.Now : record.UpdatedAt));
         await snapshotCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -1097,9 +1129,13 @@ public sealed class SessionStore : ISessionStore
                 ClaudePreview = ReadNullableString(reader, 35) ?? "暂无输出",
                 CodexPreview = ReadNullableString(reader, 36) ?? "暂无输出",
                 NeedsApproval = ReadNullableBool(reader, 37) ?? false,
-                AutomationStageId = ReadNullableInt(reader, 38),
-                AutomationRetryCount = ReadNullableInt(reader, 39) ?? 0,
-                UpdatedAt = ParseDbDateTime(ReadNullableString(reader, 40) ?? reader.GetString(21)),
+                AutomationPhase = ParseAutomationPhase(ReadNullableString(reader, 38)),
+                AutomationStageId = ReadNullableInt(reader, 39),
+                AutomationTaskRef = ReadNullableString(reader, 40),
+                TaskMdPath = ReadNullableString(reader, 41),
+                TaskMdStatus = ParseTaskMdStatus(ReadNullableString(reader, 42)),
+                AutomationRetryCount = ReadNullableInt(reader, 43) ?? 0,
+                UpdatedAt = ParseDbDateTime(ReadNullableString(reader, 44) ?? reader.GetString(21)),
             },
         };
     }
@@ -1252,6 +1288,20 @@ public sealed class SessionStore : ISessionStore
             "detached" => SessionHealthStatus.Detached,
             _ => SessionHealthStatus.Idle,
         };
+    }
+
+    private static AutomationPhase ParseAutomationPhase(string? value)
+    {
+        return Enum.TryParse<AutomationPhase>(value, ignoreCase: true, out var phase)
+            ? phase
+            : AutomationPhase.None;
+    }
+
+    private static TaskMdStatus ParseTaskMdStatus(string? value)
+    {
+        return Enum.TryParse<TaskMdStatus>(value, ignoreCase: true, out var status)
+            ? status
+            : TaskMdStatus.Unknown;
     }
 
     private static ManagedSessionRecord CreateRecord(LauncherSession session)

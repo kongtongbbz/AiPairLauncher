@@ -69,6 +69,31 @@ public sealed class MainWindowViewModelTests
         Assert.Equal(SessionHealthStatus.Waiting, viewModel.SessionRecords[0].HealthStatus);
     }
 
+    [Fact(DisplayName = "test_apply_automation_state_surfaces_phase_and_taskmd_summary")]
+    public void ApplyAutomationStateSurfacesPhaseAndTaskMdSummary()
+    {
+        var viewModel = new MainWindowViewModel();
+
+        viewModel.ApplyAutomationState(new AutomationRunState
+        {
+            Phase = AutomationPhase.Phase3Execution,
+            Status = AutomationStageStatus.WaitingForCodexReport,
+            StatusDetail = "等待 Codex 执行",
+            TaskMdPath = @"D:\repo\task.md",
+            TaskMdStatus = TaskMdStatus.InProgress,
+            CurrentTaskRef = "T2.1",
+            CurrentTaskStageHeading = "阶段 2: 任务执行",
+            TaskCount = 6,
+            CompletedTaskCount = 2,
+        });
+
+        Assert.Equal("Phase 3 · 任务执行", viewModel.AutomationPhaseLabel);
+        Assert.Equal(@"D:\repo\task.md", viewModel.AutomationTaskMdPath);
+        Assert.Equal("IN_PROGRESS", viewModel.AutomationTaskMdStatus);
+        Assert.Equal("T2.1", viewModel.AutomationCurrentTaskRef);
+        Assert.Equal("已完成 2/6 · 当前阶段 阶段 2: 任务执行", viewModel.AutomationTaskProgressSummary);
+    }
+
     private static ManagedSessionRecord CreateRecord(string workspace, string groupName, SessionHealthStatus status)
     {
         var session = new LauncherSession

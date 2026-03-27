@@ -81,10 +81,15 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string _footerMessage = "等待操作。";
     private string _logText = "日志初始化完成。";
     private string _automationStatusLabel = "Idle";
+    private string _automationPhaseLabel = "暂无";
     private string _automationStatusDetail = "自动编排未启动。";
     private string _automationLastPacketSummary = "暂无";
     private string _automationLastError = "暂无";
     private string _automationUpdatedAt = "暂无";
+    private string _automationTaskMdPath = "暂无";
+    private string _automationTaskMdStatus = "暂无";
+    private string _automationTaskProgressSummary = "暂无";
+    private string _automationCurrentTaskRef = "暂无";
     private string _automationTaskPrompt = "请围绕当前工作目录中的项目需求推进开发，先拆成可审批的阶段计划，再驱动 Codex 执行与验证，直到完成。";
     private string _automationAdvancePolicy = "full-auto-loop";
     private string _automationAutoAdvanceStatusText = "未启用";
@@ -698,6 +703,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         private set => SetField(ref _automationStatusLabel, value);
     }
 
+    public string AutomationPhaseLabel
+    {
+        get => _automationPhaseLabel;
+        private set => SetField(ref _automationPhaseLabel, value);
+    }
+
     public string AutomationStatusDetail
     {
         get => _automationStatusDetail;
@@ -720,6 +731,30 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         get => _automationUpdatedAt;
         private set => SetField(ref _automationUpdatedAt, value);
+    }
+
+    public string AutomationTaskMdPath
+    {
+        get => _automationTaskMdPath;
+        private set => SetField(ref _automationTaskMdPath, value);
+    }
+
+    public string AutomationTaskMdStatus
+    {
+        get => _automationTaskMdStatus;
+        private set => SetField(ref _automationTaskMdStatus, value);
+    }
+
+    public string AutomationTaskProgressSummary
+    {
+        get => _automationTaskProgressSummary;
+        private set => SetField(ref _automationTaskProgressSummary, value);
+    }
+
+    public string AutomationCurrentTaskRef
+    {
+        get => _automationCurrentTaskRef;
+        private set => SetField(ref _automationCurrentTaskRef, value);
     }
 
     public string AutomationAutoAdvanceStatusText
@@ -1139,10 +1174,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public void ApplyAutomationState(AutomationRunState state)
     {
         AutomationStatusLabel = state.Status.ToString();
+        AutomationPhaseLabel = FormatPhaseLabel(state.Phase);
         AutomationStatusDetail = state.StatusDetail;
         AutomationLastPacketSummary = string.IsNullOrWhiteSpace(state.LastPacketSummary) ? "暂无" : state.LastPacketSummary;
         AutomationLastError = string.IsNullOrWhiteSpace(state.LastError) ? "暂无" : state.LastError;
         AutomationUpdatedAt = state.UpdatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+        AutomationTaskMdPath = DisplayOrPlaceholder(state.TaskMdPath);
+        AutomationTaskMdStatus = FormatTaskMdStatus(state.TaskMdStatus);
+        AutomationCurrentTaskRef = DisplayOrPlaceholder(state.CurrentTaskRef);
+        AutomationTaskProgressSummary = state.TaskCount <= 0
+            ? "暂无"
+            : $"已完成 {state.CompletedTaskCount}/{state.TaskCount} · 当前阶段 {state.CurrentTaskStageHeading}";
         AutomationAutoAdvanceStatusText = state.AutoAdvanceEnabled ? "已启用" : "未启用";
         AutomationAutoApprovedStageCount = state.AutoApprovedStageCount;
         AutomationCurrentStageRetryCount = state.CurrentStageRetryCount;
@@ -1424,6 +1466,30 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private static string DisplayOrPlaceholder(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? "暂无" : value.Trim();
+    }
+
+    private static string FormatPhaseLabel(AutomationPhase phase)
+    {
+        return phase switch
+        {
+            AutomationPhase.Phase1Research => "Phase 1 · 项目调研",
+            AutomationPhase.Phase2Planning => "Phase 2 · 计划编排",
+            AutomationPhase.Phase3Execution => "Phase 3 · 任务执行",
+            AutomationPhase.Phase4Review => "Phase 4 · 复核验收",
+            _ => "Legacy / 暂无",
+        };
+    }
+
+    private static string FormatTaskMdStatus(TaskMdStatus status)
+    {
+        return status switch
+        {
+            TaskMdStatus.PendingPlan => "PENDING_PLAN",
+            TaskMdStatus.Planned => "PLANNED",
+            TaskMdStatus.InProgress => "IN_PROGRESS",
+            TaskMdStatus.Done => "DONE",
+            _ => "暂无",
+        };
     }
 
     private static string ResolveAppVersion()

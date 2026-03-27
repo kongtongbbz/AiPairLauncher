@@ -66,6 +66,33 @@ Quick safety check:
         Assert.Equal("阶段已发送", refreshed[0].LastSummary);
     }
 
+    [Fact(DisplayName = "test_session_monitor_persists_phase_aware_fields")]
+    public async Task SessionMonitorPersistsPhaseAwareFieldsAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var service = new SessionMonitorService(fakeWezTerm, new FakeNotificationService());
+        var record = CreateRecord();
+
+        var refreshed = await service.RefreshAsync(
+            [record],
+            _ => new AutomationRunState
+            {
+                Phase = AutomationPhase.Phase2Planning,
+                Status = AutomationStageStatus.PendingUserApproval,
+                StatusDetail = "等待审批",
+                TaskMdPath = @"D:\repo\task.md",
+                TaskMdStatus = TaskMdStatus.Planned,
+                CurrentTaskRef = "T1.2",
+            });
+
+        Assert.Single(refreshed);
+        Assert.Equal(SessionHealthStatus.Waiting, refreshed[0].HealthStatus);
+        Assert.Equal(AutomationPhase.Phase2Planning, refreshed[0].StatusSnapshot.AutomationPhase);
+        Assert.Equal(@"D:\repo\task.md", refreshed[0].StatusSnapshot.TaskMdPath);
+        Assert.Equal(TaskMdStatus.Planned, refreshed[0].StatusSnapshot.TaskMdStatus);
+        Assert.Equal("T1.2", refreshed[0].StatusSnapshot.AutomationTaskRef);
+    }
+
     private static ManagedSessionRecord CreateRecord()
     {
         var session = AutomationTestHelpers.CreateSession();
