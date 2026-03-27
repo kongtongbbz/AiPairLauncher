@@ -157,7 +157,9 @@ internal static class AutomationPromptFactory
 
     public static string BuildClaudeRevisionPrompt(ApprovalDraft draft, string? userNote, string taskPrompt)
     {
-        return BuildPhaseRevisionPrompt(draft, userNote, taskPrompt);
+        return draft.Phase == AutomationPhase.None
+            ? BuildLegacyRevisionPrompt(draft, userNote, taskPrompt)
+            : BuildPhaseRevisionPrompt(draft, userNote, taskPrompt);
     }
 
     private static string BuildPhasePlanPrompt(
@@ -237,5 +239,24 @@ CODEX_BRIEF
             AutomationPhase.Phase4Review => "phase4_review",
             _ => "phase3_execution",
         };
+    }
+
+    private static string BuildLegacyRevisionPrompt(ApprovalDraft draft, string? userNote, string taskPrompt)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("当前阶段计划被用户退回，请你重拟并重新输出 stage_plan 结构化数据包。");
+        builder.AppendLine($"退回阶段: {draft.StageId}");
+        builder.AppendLine("当前用户目标：");
+        builder.AppendLine(taskPrompt.Trim());
+        if (!string.IsNullOrWhiteSpace(userNote))
+        {
+            builder.AppendLine($"用户反馈: {userNote.Trim()}");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("请保留严格的结构化格式，不要在包外补充说明。");
+        builder.AppendLine($"stage_id 必须固定为当前退回阶段 {draft.StageId}，且必须是从 1 开始的正整数，禁止使用 0。");
+        builder.AppendLine($"stage_id: {draft.StageId}");
+        return builder.ToString().TrimEnd();
     }
 }

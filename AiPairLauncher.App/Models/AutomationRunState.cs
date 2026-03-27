@@ -10,6 +10,8 @@ public sealed class AutomationRunState
 
     public string? CurrentTaskRef { get; init; }
 
+    public string CurrentTaskStageHeading { get; init; } = "暂无";
+
     public string StatusDetail { get; init; } = "空闲";
 
     public string LastPacketSummary { get; init; } = "暂无";
@@ -17,6 +19,10 @@ public sealed class AutomationRunState
     public string? TaskMdPath { get; init; }
 
     public TaskMdStatus TaskMdStatus { get; init; } = TaskMdStatus.Unknown;
+
+    public int TaskCount { get; init; }
+
+    public int CompletedTaskCount { get; init; }
 
     public ApprovalDraft? PendingApproval { get; init; }
 

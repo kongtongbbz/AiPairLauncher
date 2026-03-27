@@ -1,3 +1,4 @@
+using System.IO;
 using AiPairLauncher.App.Models;
 using AiPairLauncher.App.Services;
 
@@ -174,10 +175,12 @@ internal static class AutomationTestHelpers
 {
     public static LauncherSession CreateSession()
     {
+        var workingDirectory = Path.Combine(Path.GetTempPath(), "AiPairLauncher.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workingDirectory);
         return new LauncherSession
         {
             Workspace = "test-workspace",
-            WorkingDirectory = "D:\\Temp",
+            WorkingDirectory = workingDirectory,
             WezTermPath = "wezterm.exe",
             SocketPath = "sock",
             GuiPid = 100,
@@ -195,10 +198,12 @@ internal static class AutomationTestHelpers
 
     public static LauncherSession CreateManualSession()
     {
+        var workingDirectory = Path.Combine(Path.GetTempPath(), "AiPairLauncher.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workingDirectory);
         return new LauncherSession
         {
             Workspace = "manual-workspace",
-            WorkingDirectory = "D:\\Temp",
+            WorkingDirectory = workingDirectory,
             WezTermPath = "wezterm.exe",
             SocketPath = "sock",
             GuiPid = 100,
@@ -332,5 +337,182 @@ body: <<<BODY
 BODY
 [/AIPAIR_PACKET]
 """;
+    }
+
+    public static string BuildPhaseStagePlanPacket(
+        AutomationPhase phase,
+        int stageId,
+        string taskMdPath,
+        TaskMdStatus taskMdStatus,
+        string title = "阶段计划",
+        string codexBrief = "执行任务")
+    {
+        return $"""
+[AIPAIR_PACKET]
+role: claude
+kind: stage_plan
+phase: {ToPhaseValue(phase)}
+subagent: planner
+stage_id: {stageId}
+task_md_path: {taskMdPath}
+task_md_status: {ToTaskMdStatusValue(taskMdStatus)}
+title: {title}
+summary: <<<SUMMARY
+阶段 {stageId} 摘要
+SUMMARY
+scope: <<<SCOPE
+仅修改必要代码
+SCOPE
+steps: <<<STEPS
+1. 完成任务
+2. 运行验证
+STEPS
+acceptance: <<<ACCEPTANCE
+1. 构建通过
+2. 输出正确
+ACCEPTANCE
+codex_brief: <<<CODEX_BRIEF
+{codexBrief}
+CODEX_BRIEF
+[/AIPAIR_PACKET]
+""";
+    }
+
+    public static string BuildPhaseExecutionReportPacket(
+        int stageId,
+        string taskMdPath,
+        TaskMdStatus taskMdStatus,
+        string summary = "已执行",
+        string? taskRef = null)
+    {
+        var taskRefLine = string.IsNullOrWhiteSpace(taskRef) ? string.Empty : $"task_ref: {taskRef}{Environment.NewLine}";
+        return $"""
+[AIPAIR_PACKET]
+role: codex
+kind: execution_report
+phase: phase3_execution
+stage_id: {stageId}
+{taskRefLine}task_md_path: {taskMdPath}
+task_md_status: {ToTaskMdStatusValue(taskMdStatus)}
+status: success
+summary: <<<SUMMARY
+{summary}
+SUMMARY
+completed: <<<COMPLETED
+1. 完成编码
+COMPLETED
+verification: <<<VERIFICATION
+1. 运行构建
+VERIFICATION
+blockers: <<<BLOCKERS
+无
+BLOCKERS
+review_focus: <<<FOCUS
+请检查边界条件
+FOCUS
+body: <<<BODY
+执行完成，请审定。
+BODY
+[/AIPAIR_PACKET]
+""";
+    }
+
+    public static string BuildPhaseReviewDecisionPacket(
+        AutomationPhase phase,
+        int stageId,
+        string decision,
+        string taskMdPath,
+        TaskMdStatus taskMdStatus,
+        string codexBrief = "继续执行",
+        string? taskRef = null)
+    {
+        var taskRefLine = string.IsNullOrWhiteSpace(taskRef) ? string.Empty : $"task_ref: {taskRef}{Environment.NewLine}";
+        var codexSection = decision is "next_stage" or "retry_stage"
+            ? $"""
+title: 阶段 {stageId} 后续
+summary: <<<SUMMARY
+审定通过，给出后续动作。
+SUMMARY
+steps: <<<STEPS
+1. 下一步处理
+STEPS
+acceptance: <<<ACCEPTANCE
+1. 下一阶段验收
+ACCEPTANCE
+codex_brief: <<<CODEX
+{codexBrief}
+CODEX
+"""
+            : string.Empty;
+
+        return $"""
+[AIPAIR_PACKET]
+role: claude
+kind: review_decision
+phase: {ToPhaseValue(phase)}
+stage_id: {stageId}
+{taskRefLine}task_md_path: {taskMdPath}
+task_md_status: {ToTaskMdStatusValue(taskMdStatus)}
+decision: {decision}
+{codexSection}body: <<<BODY
+审定说明
+BODY
+[/AIPAIR_PACKET]
+""";
+    }
+
+    public static string WriteTaskMd(LauncherSession session, TaskMdStatus status, string body)
+    {
+        var taskMdPath = Path.Combine(session.WorkingDirectory, "task.md");
+        File.WriteAllText(
+            taskMdPath,
+            $$"""
+# Task: 自动编排测试
+
+> 生成时间: 2026-03-28T10:30:00+08:00
+> 工作目录: {{session.WorkingDirectory}}
+> 状态: {{ToTaskMdStatusHeader(status)}}
+
+## 任务清单
+
+{{body}}
+""");
+        return taskMdPath;
+    }
+
+    private static string ToPhaseValue(AutomationPhase phase)
+    {
+        return phase switch
+        {
+            AutomationPhase.Phase1Research => "phase1_research",
+            AutomationPhase.Phase2Planning => "phase2_planning",
+            AutomationPhase.Phase3Execution => "phase3_execution",
+            AutomationPhase.Phase4Review => "phase4_review",
+            _ => "phase3_execution",
+        };
+    }
+
+    private static string ToTaskMdStatusValue(TaskMdStatus status)
+    {
+        return status switch
+        {
+            TaskMdStatus.PendingPlan => "pending_plan",
+            TaskMdStatus.Planned => "planned",
+            TaskMdStatus.InProgress => "in_progress",
+            TaskMdStatus.Done => "done",
+            _ => "unknown",
+        };
+    }
+
+    private static string ToTaskMdStatusHeader(TaskMdStatus status)
+    {
+        return status switch
+        {
+            TaskMdStatus.PendingPlan => "PENDING_PLAN",
+            TaskMdStatus.Planned => "PLANNED",
+            TaskMdStatus.InProgress => "IN_PROGRESS",
+            TaskMdStatus.Done => "DONE",
+            _ => "UNKNOWN",
+        };
     }
 }
