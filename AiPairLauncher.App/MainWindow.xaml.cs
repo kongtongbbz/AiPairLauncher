@@ -2,6 +2,7 @@ using System.IO;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using AiPairLauncher.App.Models;
 using AiPairLauncher.App.Services;
@@ -19,6 +20,7 @@ public partial class MainWindow : Window
     private readonly ISessionRuntimeRegistry _sessionRuntimeRegistry;
     private readonly IWezTermService _wezTermService;
     private readonly MainWindowViewModel _viewModel;
+    private readonly ShellViewModel _shellViewModel;
     private readonly DispatcherTimer _sessionHealthTimer;
     private readonly Dictionary<string, EventHandler<AutomationRunState>> _automationHandlers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AutomationSettings> _automationSettingsBySession = new(StringComparer.Ordinal);
@@ -50,13 +52,14 @@ public partial class MainWindow : Window
             ThemeMode.EyeCare => "eye-care",
             _ => "dark",
         };
+        _shellViewModel = new ShellViewModel(_viewModel, new NavigationService());
         _sessionHealthTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(8),
         };
 
         InitializeComponent();
-        DataContext = _viewModel;
+        DataContext = _shellViewModel;
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
         _sessionHealthTimer.Tick += SessionHealthTimer_Tick;
@@ -117,12 +120,12 @@ public partial class MainWindow : Window
         await RefreshSessionHealthAsync(writeLog: false);
     }
 
-    private async void RefreshDependencies_Click(object sender, RoutedEventArgs e)
+    internal async void RefreshDependencies_Click(object sender, RoutedEventArgs e)
     {
         await RefreshDependenciesAsync();
     }
 
-    private async void ThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal async void ThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_hasInitialized)
         {
@@ -144,7 +147,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void RefreshSessions_Click(object sender, RoutedEventArgs e)
+    internal async void RefreshSessions_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("刷新会话", async () =>
         {
@@ -154,7 +157,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void ApplyLaunchProfile_Click(object sender, RoutedEventArgs e)
+    internal async void ApplyLaunchProfile_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("套用模板", async () =>
         {
@@ -170,7 +173,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void SaveLaunchProfile_Click(object sender, RoutedEventArgs e)
+    internal async void SaveLaunchProfile_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("保存模板", async () =>
         {
@@ -183,7 +186,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void SessionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal async void SessionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var selectedRecord = _viewModel.SelectedSessionRecord;
         _currentSession = selectedRecord?.Session;
@@ -213,7 +216,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void StartSession_Click(object sender, RoutedEventArgs e)
+    internal async void StartSession_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("启动会话", async () =>
         {
@@ -285,7 +288,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void StartAutomation_Click(object sender, RoutedEventArgs e)
+    internal async void StartAutomation_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("启动自动模式", async () =>
         {
@@ -293,7 +296,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void StopAutomation_Click(object sender, RoutedEventArgs e)
+    internal async void StopAutomation_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("停止自动模式", async () =>
         {
@@ -301,7 +304,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void ApprovePlan_Click(object sender, RoutedEventArgs e)
+    internal async void ApprovePlan_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("批准计划", async () =>
         {
@@ -318,7 +321,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void RejectPlan_Click(object sender, RoutedEventArgs e)
+    internal async void RejectPlan_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("退回计划", async () =>
         {
@@ -335,17 +338,17 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void SendLeftToRight_Click(object sender, RoutedEventArgs e)
+    internal async void SendLeftToRight_Click(object sender, RoutedEventArgs e)
     {
         await SendContextAsync(fromLeftToRight: true);
     }
 
-    private async void SendRightToLeft_Click(object sender, RoutedEventArgs e)
+    internal async void SendRightToLeft_Click(object sender, RoutedEventArgs e)
     {
         await SendContextAsync(fromLeftToRight: false);
     }
 
-    private async void ReloadLastSession_Click(object sender, RoutedEventArgs e)
+    internal async void ReloadLastSession_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("加载会话", async () =>
         {
@@ -354,7 +357,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void ReconnectSession_Click(object sender, RoutedEventArgs e)
+    internal async void ReconnectSession_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("重连会话", async () =>
         {
@@ -362,7 +365,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void FocusClaudePane_Click(object sender, RoutedEventArgs e)
+    internal async void FocusClaudePane_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("聚焦 Claude", async () =>
         {
@@ -372,7 +375,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void FocusCodexPane_Click(object sender, RoutedEventArgs e)
+    internal async void FocusCodexPane_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("聚焦 Codex", async () =>
         {
@@ -382,7 +385,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void TogglePinSession_Click(object sender, RoutedEventArgs e)
+    internal async void TogglePinSession_Click(object sender, RoutedEventArgs e)
     {
         var sessionId = ResolveSessionId(sender);
         if (string.IsNullOrWhiteSpace(sessionId))
@@ -404,7 +407,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void ArchiveSession_Click(object sender, RoutedEventArgs e)
+    internal async void ArchiveSession_Click(object sender, RoutedEventArgs e)
     {
         var sessionId = ResolveSessionId(sender) ?? _viewModel.SelectedSessionRecord?.SessionId;
         if (string.IsNullOrWhiteSpace(sessionId))
@@ -420,7 +423,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void RestoreSession_Click(object sender, RoutedEventArgs e)
+    internal async void RestoreSession_Click(object sender, RoutedEventArgs e)
     {
         var sessionId = ResolveSessionId(sender) ?? _viewModel.SelectedSessionRecord?.SessionId;
         if (string.IsNullOrWhiteSpace(sessionId))
@@ -437,7 +440,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void SaveSessionMetadata_Click(object sender, RoutedEventArgs e)
+    internal async void SaveSessionMetadata_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("保存会话信息", async () =>
         {
@@ -454,7 +457,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void CopySessionConfig_Click(object sender, RoutedEventArgs e)
+    internal async void CopySessionConfig_Click(object sender, RoutedEventArgs e)
     {
         var sessionId = ResolveSessionId(sender) ?? _viewModel.SelectedSessionRecord?.SessionId;
         if (string.IsNullOrWhiteSpace(sessionId))
@@ -477,7 +480,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private void SelectPendingSession_Click(object sender, RoutedEventArgs e)
+    internal void SelectPendingSession_Click(object sender, RoutedEventArgs e)
     {
         var sessionId = ResolveSessionId(sender);
         if (string.IsNullOrWhiteSpace(sessionId))
@@ -488,7 +491,7 @@ public partial class MainWindow : Window
         _viewModel.SelectSessionById(sessionId);
     }
 
-    private void OpenWorktreePath_Click(object sender, RoutedEventArgs e)
+    internal void OpenWorktreePath_Click(object sender, RoutedEventArgs e)
     {
         var record = _viewModel.SelectedSessionRecord;
         if (record is null || !Directory.Exists(record.Session.WorkingDirectory))
@@ -505,7 +508,7 @@ public partial class MainWindow : Window
         _viewModel.FooterMessage = "已打开 worktree 目录";
     }
 
-    private async void CleanupWorktree_Click(object sender, RoutedEventArgs e)
+    internal async void CleanupWorktree_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("清理 worktree", async () =>
         {
@@ -533,7 +536,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void CleanupOrphanedWorktrees_Click(object sender, RoutedEventArgs e)
+    internal async void CleanupOrphanedWorktrees_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("清理孤儿 worktree", async () =>
         {
@@ -569,7 +572,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void ClearAppCache_Click(object sender, RoutedEventArgs e)
+    internal async void ClearAppCache_Click(object sender, RoutedEventArgs e)
     {
         await ExecuteActionAsync("清理程序缓存", async () =>
         {
@@ -601,13 +604,18 @@ public partial class MainWindow : Window
         });
     }
 
-    private void ClearLog_Click(object sender, RoutedEventArgs e)
+    internal void ClearLog_Click(object sender, RoutedEventArgs e)
     {
         _viewModel.ClearLog();
         _viewModel.AppendLog("日志已清空。");
     }
 
-    private void BrowseWorkingDirectory_Click(object sender, RoutedEventArgs e)
+    internal void OnClearLog(object sender, RoutedEventArgs e)
+    {
+        ClearLog_Click(sender, e);
+    }
+
+    internal void BrowseWorkingDirectory_Click(object sender, RoutedEventArgs e)
     {
         var initialFolder = Directory.Exists(_viewModel.WorkingDirectory)
             ? _viewModel.WorkingDirectory
@@ -625,6 +633,25 @@ public partial class MainWindow : Window
         {
             _viewModel.WorkingDirectory = dialog.FolderName;
             _viewModel.AppendLog($"工作目录已切换: {_viewModel.WorkingDirectory}");
+        }
+    }
+
+    internal void NavigateToSessionDetail(string? sessionId)
+    {
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            _viewModel.SelectSessionById(sessionId);
+        }
+
+        _shellViewModel.Navigate(NavigationPageKeys.SessionDetail, sessionId);
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.L)
+        {
+            _shellViewModel.ToggleLogDrawer();
+            e.Handled = true;
         }
     }
 
