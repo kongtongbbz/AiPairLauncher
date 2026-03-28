@@ -133,10 +133,14 @@ public sealed class SessionMonitorService : ISessionMonitorService
         record.LastSeenAt = DateTimeOffset.Now;
         record.UpdatedAt = DateTimeOffset.Now;
         record.StatusSnapshot.NeedsApproval = state.PendingApproval is not null;
+        record.StatusSnapshot.AutomationPhase = state.Phase;
         record.StatusSnapshot.AutomationStageId = state.CurrentStageId;
+        record.StatusSnapshot.AutomationTaskRef = state.CurrentTaskRef;
+        record.StatusSnapshot.TaskMdPath = state.TaskMdPath;
+        record.StatusSnapshot.TaskMdStatus = state.TaskMdStatus;
         record.StatusSnapshot.AutomationRetryCount = state.CurrentStageRetryCount;
         record.StatusSnapshot.ClaudePreview = state.PendingApproval is null
-            ? record.StatusSnapshot.ClaudePreview
+            ? "暂无输出"
             : BuildApprovalPreview(state.PendingApproval);
 
         switch (state.Status)
@@ -159,7 +163,7 @@ public sealed class SessionMonitorService : ISessionMonitorService
 
         record.HealthDetail = string.IsNullOrWhiteSpace(state.StatusDetail)
             ? record.HealthDetail
-            : state.StatusDetail;
+            : BuildPhaseAwareDetail(state);
     }
 
     private void MaybeNotify(SessionHealthStatus previousStatus, ManagedSessionRecord record)
@@ -234,5 +238,21 @@ public sealed class SessionMonitorService : ISessionMonitorService
         var title = string.IsNullOrWhiteSpace(approvalDraft.Title) ? "待审批计划" : approvalDraft.Title.Trim();
         var summary = string.IsNullOrWhiteSpace(approvalDraft.Summary) ? "等待人工确认" : approvalDraft.Summary.Trim();
         return $"{title}{Environment.NewLine}{summary}";
+    }
+
+    private static string BuildPhaseAwareDetail(AutomationRunState state)
+    {
+        var prefix = state.Phase switch
+        {
+            AutomationPhase.Phase1Research => "Phase 1",
+            AutomationPhase.Phase2Planning => "Phase 2",
+            AutomationPhase.Phase3Execution => "Phase 3",
+            AutomationPhase.Phase4Review => "Phase 4",
+            _ => null,
+        };
+
+        return string.IsNullOrWhiteSpace(prefix)
+            ? state.StatusDetail
+            : $"{prefix} · {state.StatusDetail}";
     }
 }

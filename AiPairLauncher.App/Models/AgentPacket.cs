@@ -6,7 +6,17 @@ public sealed class AgentPacket
 
     public PacketKind Kind { get; init; }
 
+    public AutomationPhase Phase { get; init; } = AutomationPhase.None;
+
     public int StageId { get; init; }
+
+    public string? Subagent { get; init; }
+
+    public string? TaskRef { get; init; }
+
+    public string? ParallelGroup { get; init; }
+
+    public int? RetryCount { get; init; }
 
     public string Fingerprint { get; init; } = string.Empty;
 
@@ -22,9 +32,15 @@ public sealed class AgentPacket
 
     public IReadOnlyList<string> AcceptanceCriteria { get; init; } = [];
 
+    public IReadOnlyList<string> TaskProgress { get; init; } = [];
+
     public string? Status { get; init; }
 
     public ReviewDecision? Decision { get; init; }
+
+    public string? TaskMdPath { get; init; }
+
+    public TaskMdStatus TaskMdStatus { get; init; } = TaskMdStatus.Unknown;
 
     public IReadOnlyList<string> CompletedItems { get; init; } = [];
 
@@ -43,6 +59,14 @@ public sealed class AgentPacket
         get
         {
             var roleText = Role == AgentRole.Claude ? "Claude" : "Codex";
+            var phaseText = Phase switch
+            {
+                AutomationPhase.Phase1Research => "P1",
+                AutomationPhase.Phase2Planning => "P2",
+                AutomationPhase.Phase3Execution => "P3",
+                AutomationPhase.Phase4Review => "P4",
+                _ => "Legacy",
+            };
             var kindText = Kind switch
             {
                 PacketKind.StagePlan => "阶段计划",
@@ -66,7 +90,7 @@ public sealed class AgentPacket
                 .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .FirstOrDefault() ?? "无摘要";
 
-            return $"{roleText}/{kindText} 阶段 {StageId}: {headline}";
+            return $"{roleText}/{phaseText}/{kindText} 阶段 {StageId}: {headline}";
         }
     }
 }

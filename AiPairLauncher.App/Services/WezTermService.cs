@@ -379,7 +379,8 @@ public sealed class WezTermService : IWezTermService
             };
         }
 
-        if (!string.IsNullOrWhiteSpace(dirtyResult.StandardOutput))
+        if (!string.IsNullOrWhiteSpace(dirtyResult.StandardOutput) &&
+            !HasOnlyManagedTaskMdChanges(dirtyResult.StandardOutput))
         {
             return new WorktreeMaintenanceResult
             {
@@ -1090,9 +1091,6 @@ public sealed class WezTermService : IWezTermService
     private string BuildClaudeAutomationCommand(LauncherSession session, string promptPath)
     {
         var claudePath = ResolveClaudePath();
-        var permissionMode = string.Equals(session.ClaudePermissionMode, "plan", StringComparison.OrdinalIgnoreCase)
-            ? "plan"
-            : "default";
         var promptPreviewPreamble = BuildPromptPreviewPreamble("Claude");
 
         return string.Join(
@@ -1101,14 +1099,13 @@ public sealed class WezTermService : IWezTermService
             "[Console]::InputEncoding=[System.Text.Encoding]::UTF8;",
             "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;",
             "$OutputEncoding=[System.Text.Encoding]::UTF8;",
-            $"try {{ $promptText = Get-Content -Encoding UTF8 -Raw -LiteralPath {QuoteForPowerShell(promptPath)}; {promptPreviewPreamble} $promptText | & {QuoteForPowerShell(claudePath)} -p --permission-mode {permissionMode} --output-format text 2>&1 }}",
+            $"try {{ $promptText = Get-Content -Encoding UTF8 -Raw -LiteralPath {QuoteForPowerShell(promptPath)}; {promptPreviewPreamble} $promptText | & {QuoteForPowerShell(claudePath)} -p --dangerously-skip-permissions --output-format text 2>&1 }}",
             $"finally {{ Remove-Item -LiteralPath {QuoteForPowerShell(promptPath)} -Force -ErrorAction SilentlyContinue }}");
     }
 
     private string BuildCodexAutomationCommand(LauncherSession session, string promptPath)
     {
         var codexPath = ResolveCodexPath();
-        var modeArgs = BuildCodexExecModeArguments(session.CodexMode);
         var promptPreviewPreamble = BuildPromptPreviewPreamble("Codex");
         return string.Join(
             " ",
@@ -1116,7 +1113,7 @@ public sealed class WezTermService : IWezTermService
             "[Console]::InputEncoding=[System.Text.Encoding]::UTF8;",
             "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;",
             "$OutputEncoding=[System.Text.Encoding]::UTF8;",
-            $"try {{ $promptText = Get-Content -Encoding UTF8 -Raw -LiteralPath {QuoteForPowerShell(promptPath)}; {promptPreviewPreamble} $promptText | & {QuoteForPowerShell(codexPath)} exec {modeArgs} --skip-git-repo-check --color never -C {QuoteForPowerShell(session.WorkingDirectory)} - 2>&1 }}",
+            $"try {{ $promptText = Get-Content -Encoding UTF8 -Raw -LiteralPath {QuoteForPowerShell(promptPath)}; {promptPreviewPreamble} $promptText | & {QuoteForPowerShell(codexPath)} exec --full-auto --skip-git-repo-check --color never -C {QuoteForPowerShell(session.WorkingDirectory)} - 2>&1 }}",
             $"finally {{ Remove-Item -LiteralPath {QuoteForPowerShell(promptPath)} -Force -ErrorAction SilentlyContinue }}");
     }
 
@@ -1286,6 +1283,19 @@ public sealed class WezTermService : IWezTermService
         }
 
         return paths;
+    }
+
+    private static bool HasOnlyManagedTaskMdChanges(string gitStatusOutput)
+    {
+        var changedPaths = gitStatusOutput
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(static line => line.Length > 3 ? line[3..].Trim() : line.Trim())
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(static path => path.Replace('\\', '/'))
+            .ToArray();
+
+        return changedPaths.Length > 0 &&
+               changedPaths.All(static path => string.Equals(path, "task.md", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string BuildWorktreeBranchName(LaunchRequest request)

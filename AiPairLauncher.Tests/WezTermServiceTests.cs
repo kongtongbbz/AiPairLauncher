@@ -247,6 +247,115 @@ public sealed class WezTermServiceTests : IDisposable
         }
     }
 
+    [Fact(DisplayName = "test_send_automation_prompt_forces_claude_skip_permissions")]
+    public async Task SendAutomationPromptForcesClaudeSkipPermissionsAsync()
+    {
+        var runner = new FakeProcessRunner((command) => Task.FromResult(new ProcessResult
+        {
+            ExitCode = 0,
+            StandardOutput = "ok",
+            StandardError = string.Empty,
+        }));
+        File.WriteAllText(Path.Combine(_toolPath, "claude.exe"), string.Empty);
+        var service = new WezTermService(new CommandLocator(), runner);
+
+        await service.SendAutomationPromptAsync(AutomationTestHelpers.CreateSession(), AgentRole.Claude, "hello", submit: false);
+
+        var sendTextCommand = runner.Commands.Last();
+        Assert.Contains("send-text", sendTextCommand.Arguments);
+        Assert.NotNull(sendTextCommand.StandardInput);
+        Assert.Contains("--dangerously-skip-permissions", sendTextCommand.StandardInput);
+    }
+
+    [Fact(DisplayName = "test_send_automation_prompt_forces_codex_full_auto")]
+    public async Task SendAutomationPromptForcesCodexFullAutoAsync()
+    {
+        var runner = new FakeProcessRunner((command) => Task.FromResult(new ProcessResult
+        {
+            ExitCode = 0,
+            StandardOutput = "ok",
+            StandardError = string.Empty,
+        }));
+        File.WriteAllText(Path.Combine(_toolPath, "codex.cmd"), string.Empty);
+        var service = new WezTermService(new CommandLocator(), runner);
+
+        await service.SendAutomationPromptAsync(AutomationTestHelpers.CreateSession(), AgentRole.Codex, "hello", submit: false);
+
+        var sendTextCommand = runner.Commands.Last();
+        Assert.Contains("send-text", sendTextCommand.Arguments);
+        Assert.NotNull(sendTextCommand.StandardInput);
+        Assert.Contains("exec --full-auto", sendTextCommand.StandardInput);
+    }
+
+    [Fact(DisplayName = "test_cleanup_worktree_allows_taskmd_only_changes")]
+    public async Task CleanupWorktreeAllowsTaskMdOnlyChangesAsync()
+    {
+        var repoPath = Path.Combine(_rootPath, "repo-cleanup");
+        var worktreePath = Path.Combine(repoPath, ".worktrees", "feature-a");
+        Directory.CreateDirectory(worktreePath);
+
+        var runner = new FakeProcessRunner((command) =>
+        {
+            if (command.Arguments.Contains("rev-parse"))
+            {
+                return Task.FromResult(new ProcessResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = repoPath,
+                    StandardError = string.Empty,
+                });
+            }
+
+            if (command.Arguments.SequenceEqual(new[] { "status", "--porcelain" }))
+            {
+                return Task.FromResult(new ProcessResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = "?? task.md",
+                    StandardError = string.Empty,
+                });
+            }
+
+            if (command.Arguments.SequenceEqual(new[] { "branch", "--show-current" }))
+            {
+                return Task.FromResult(new ProcessResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = "feature-a",
+                    StandardError = string.Empty,
+                });
+            }
+
+            if (command.Arguments.Count >= 3 && command.Arguments[0] == "worktree" && command.Arguments[1] == "remove")
+            {
+                return Task.FromResult(new ProcessResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = string.Empty,
+                    StandardError = string.Empty,
+                });
+            }
+
+            if (command.Arguments.Count >= 3 && command.Arguments[0] == "branch" && command.Arguments[1] == "-d")
+            {
+                return Task.FromResult(new ProcessResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = string.Empty,
+                    StandardError = string.Empty,
+                });
+            }
+
+            throw new InvalidOperationException("unexpected command");
+        });
+        var service = new WezTermService(new CommandLocator(), runner);
+
+        var result = await service.CleanupWorktreeAsync(worktreePath);
+
+        Assert.True(result.Success);
+        Assert.True(result.WorktreeRemoved);
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("PATH", _originalPath);

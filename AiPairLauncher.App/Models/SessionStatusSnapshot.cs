@@ -4,6 +4,8 @@ public sealed class SessionStatusSnapshot
 {
     public string SessionId { get; set; } = string.Empty;
 
+    public AutomationPhase AutomationPhase { get; set; } = AutomationPhase.None;
+
     public SessionHealthStatus Status { get; set; } = SessionHealthStatus.Idle;
 
     public string StatusDetail { get; set; } = "等待检测";
@@ -22,6 +24,12 @@ public sealed class SessionStatusSnapshot
 
     public int? AutomationStageId { get; set; }
 
+    public string? AutomationTaskRef { get; set; }
+
+    public string? TaskMdPath { get; set; }
+
+    public TaskMdStatus TaskMdStatus { get; set; } = TaskMdStatus.Unknown;
+
     public int AutomationRetryCount { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
@@ -31,6 +39,7 @@ public sealed class SessionStatusSnapshot
         return new SessionStatusSnapshot
         {
             SessionId = SessionId,
+            AutomationPhase = AutomationPhase,
             Status = Status,
             StatusDetail = StatusDetail,
             LastActivityAt = LastActivityAt,
@@ -40,6 +49,9 @@ public sealed class SessionStatusSnapshot
             CodexPreview = CodexPreview,
             NeedsApproval = NeedsApproval,
             AutomationStageId = AutomationStageId,
+            AutomationTaskRef = AutomationTaskRef,
+            TaskMdPath = TaskMdPath,
+            TaskMdStatus = TaskMdStatus,
             AutomationRetryCount = AutomationRetryCount,
             UpdatedAt = UpdatedAt,
         };

@@ -6,9 +6,17 @@ public sealed class AutomationEventRecord
 
     public string SessionId { get; init; } = string.Empty;
 
+    public AutomationPhase Phase { get; init; } = AutomationPhase.None;
+
     public AutomationStageStatus Status { get; init; } = AutomationStageStatus.Idle;
 
     public int? StageId { get; init; }
+
+    public string? TaskRef { get; init; }
+
+    public string? TaskMdPath { get; init; }
+
+    public TaskMdStatus TaskMdStatus { get; init; } = TaskMdStatus.Unknown;
 
     public string StatusDetail { get; init; } = string.Empty;
 
@@ -26,7 +34,24 @@ public sealed class AutomationEventRecord
 
     public DateTimeOffset OccurredAt { get; init; } = DateTimeOffset.Now;
 
-    public string DisplayStage => StageId.HasValue ? $"阶段 {StageId.Value}" : "阶段未定";
+    public string DisplayStage
+    {
+        get
+        {
+            var phaseText = Phase switch
+            {
+                AutomationPhase.Phase1Research => "Phase 1",
+                AutomationPhase.Phase2Planning => "Phase 2",
+                AutomationPhase.Phase3Execution => "Phase 3",
+                AutomationPhase.Phase4Review => "Phase 4",
+                _ => "Legacy",
+            };
+
+            return StageId.HasValue
+                ? $"{phaseText} · 阶段 {StageId.Value}"
+                : $"{phaseText} · 阶段未定";
+        }
+    }
 
     public string SeverityLabel => Status switch
     {
@@ -45,8 +70,12 @@ public sealed class AutomationEventRecord
         return new AutomationEventRecord
         {
             SessionId = sessionId,
+            Phase = state.Phase,
             Status = state.Status,
             StageId = state.CurrentStageId,
+            TaskRef = state.CurrentTaskRef,
+            TaskMdPath = state.TaskMdPath,
+            TaskMdStatus = state.TaskMdStatus,
             StatusDetail = state.StatusDetail,
             LastPacketSummary = state.LastPacketSummary,
             LastError = state.LastError,

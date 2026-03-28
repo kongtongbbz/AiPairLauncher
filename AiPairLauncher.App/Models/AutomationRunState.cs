@@ -2,13 +2,27 @@ namespace AiPairLauncher.App.Models;
 
 public sealed class AutomationRunState
 {
+    public AutomationPhase Phase { get; init; } = AutomationPhase.None;
+
     public AutomationStageStatus Status { get; init; } = AutomationStageStatus.Idle;
 
     public int? CurrentStageId { get; init; }
 
+    public string? CurrentTaskRef { get; init; }
+
+    public string CurrentTaskStageHeading { get; init; } = "暂无";
+
     public string StatusDetail { get; init; } = "空闲";
 
     public string LastPacketSummary { get; init; } = "暂无";
+
+    public string? TaskMdPath { get; init; }
+
+    public TaskMdStatus TaskMdStatus { get; init; } = TaskMdStatus.Unknown;
+
+    public int TaskCount { get; init; }
+
+    public int CompletedTaskCount { get; init; }
 
     public ApprovalDraft? PendingApproval { get; init; }
 

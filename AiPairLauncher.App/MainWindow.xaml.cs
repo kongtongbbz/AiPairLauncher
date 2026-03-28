@@ -836,13 +836,6 @@ public partial class MainWindow : Window
             throw new InvalidOperationException("当前会话不是自动模式会话，请勾选“自动交互模式”后重新启动 Ai Pair。");
         }
 
-        if (!autoStartedByLaunch &&
-            (!string.Equals(_currentSession.ClaudePermissionMode, "plan", StringComparison.OrdinalIgnoreCase) ||
-             !string.Equals(_currentSession.CodexMode, "full-auto", StringComparison.OrdinalIgnoreCase)))
-        {
-            _viewModel.AppendLog("提示: 当前自动模式会话的代理模式与推荐值不一致，程序仍会继续尝试编排。");
-        }
-
         var settings = new AutomationSettings
         {
             IsEnabled = _viewModel.AutoModeEnabled,

@@ -801,8 +801,33 @@
                                            TextWrapping="Wrap"
                                            Text="{Binding AutomationStatusDetail}" />
 
+                                <UniformGrid Grid.Row="1"
+                                             Margin="0,42,0,0"
+                                             Columns="2">
+                                    <StackPanel Margin="0,0,10,8">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="当前 Phase" />
+                                        <TextBlock Margin="0,4,0,0" Text="{Binding AutomationPhaseLabel}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,0,8">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="task.md 状态" />
+                                        <TextBlock Margin="0,4,0,0" Text="{Binding AutomationTaskMdStatus}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,10,0">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="task.md 路径" />
+                                        <TextBlock Margin="0,4,0,0"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding AutomationTaskMdPath}" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="任务进度" />
+                                        <TextBlock Margin="0,4,0,0"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding AutomationTaskProgressSummary}" />
+                                    </StackPanel>
+                                </UniformGrid>
+
                                 <TextBox Grid.Row="2"
-                                         Margin="0,12,0,0"
+                                         Margin="0,104,0,0"
                                          MinHeight="88"
                                          AcceptsReturn="True"
                                          TextWrapping="Wrap"

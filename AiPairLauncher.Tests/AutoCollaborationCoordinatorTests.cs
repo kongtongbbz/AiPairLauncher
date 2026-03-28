@@ -565,6 +565,318 @@ Quick safety check:
         Assert.Empty(fakeWezTerm.SentAutomationPrompts);
     }
 
+    [Fact(DisplayName = "test_phase1_approval_routes_back_to_claude_for_phase2")]
+    public async Task Phase1ApprovalRoutesBackToClaudeForPhase2Async()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var taskMdPath = AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.PendingPlan,
+            """
+### 阶段 1: 项目调研
+
+- [ ] **T1.1**: 生成 task.md
+""");
+
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase1Research,
+                1,
+                taskMdPath,
+                TaskMdStatus.PendingPlan,
+                "Phase 1 计划",
+                "继续 Phase 2"));
+
+        await coordinator.StartAsync(session, CreateManualSettings());
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        await coordinator.ApproveAsync(null);
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudePlan &&
+            coordinator.GetCurrentState().Phase == AutomationPhase.Phase2Planning));
+        Assert.Equal(AgentRole.Claude, fakeWezTerm.SentAutomationPrompts.Last().Role);
+        Assert.Contains("phase2_planning", fakeWezTerm.SentAutomationPrompts.Last().Prompt);
+    }
+
+    [Fact(DisplayName = "test_phase2_approval_routes_back_to_claude_for_phase3")]
+    public async Task Phase2ApprovalRoutesBackToClaudeForPhase3Async()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var taskMdPath = AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.PendingPlan,
+            """
+### 阶段 1: 项目调研
+
+- [ ] **T1.1**: 生成 task.md
+""");
+
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase1Research,
+                1,
+                taskMdPath,
+                TaskMdStatus.PendingPlan));
+
+        await coordinator.StartAsync(session, CreateManualSettings());
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+        await coordinator.ApproveAsync(null);
+
+        AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.Planned,
+            """
+### 阶段 1: 项目调研
+
+- [x] **T1.1**: 生成 task.md
+
+### 阶段 2: 计划编排
+
+- [ ] **T2.1**: 完成执行规划
+""");
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase2Planning,
+                1,
+                taskMdPath,
+                TaskMdStatus.Planned,
+                "Phase 2 计划",
+                "继续 Phase 3"));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+        await coordinator.ApproveAsync(null);
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudePlan &&
+            coordinator.GetCurrentState().Phase == AutomationPhase.Phase3Execution));
+        Assert.Equal(AgentRole.Claude, fakeWezTerm.SentAutomationPrompts.Last().Role);
+        Assert.Contains("phase3_execution", fakeWezTerm.SentAutomationPrompts.Last().Prompt);
+    }
+
+    [Fact(DisplayName = "test_phase3_complete_enters_phase4_and_phase4_complete_finishes")]
+    public async Task Phase3CompleteEntersPhase4AndPhase4CompleteFinishesAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var taskMdPath = AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.PendingPlan,
+            """
+### 阶段 1: 项目调研
+
+- [ ] **T1.1**: 生成 task.md
+""");
+
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase1Research,
+                1,
+                taskMdPath,
+                TaskMdStatus.PendingPlan));
+
+        await coordinator.StartAsync(session, CreateManualSettings());
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+        await coordinator.ApproveAsync(null);
+
+        AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.Planned,
+            """
+### 阶段 1: 项目调研
+
+- [x] **T1.1**: 生成 task.md
+
+### 阶段 2: 计划编排
+
+- [x] **T2.1**: 完成执行规划
+
+### 阶段 3: 执行
+
+- [ ] **T3.1**: 实现阶段任务
+""");
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase2Planning,
+                1,
+                taskMdPath,
+                TaskMdStatus.Planned));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+        await coordinator.ApproveAsync(null);
+
+        AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.InProgress,
+            """
+### 阶段 1: 项目调研
+
+- [x] **T1.1**: 生成 task.md
+
+### 阶段 2: 计划编排
+
+- [x] **T2.1**: 完成执行规划
+
+### 阶段 3: 执行
+
+- [ ] **T3.1**: 实现阶段任务
+""");
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase3Execution,
+                1,
+                taskMdPath,
+                TaskMdStatus.InProgress,
+                "Phase 3 执行计划",
+                "执行 T3.1"));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+        await coordinator.ApproveAsync(null);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForCodexReport));
+
+        fakeWezTerm.SetPaneText(
+            session.RightPaneId,
+            AutomationTestHelpers.BuildPhaseExecutionReportPacket(1, taskMdPath, TaskMdStatus.InProgress, taskRef: "T3.1"));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudeReview));
+
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseReviewDecisionPacket(
+                AutomationPhase.Phase3Execution,
+                1,
+                "complete",
+                taskMdPath,
+                TaskMdStatus.InProgress));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudeReview &&
+            coordinator.GetCurrentState().Phase == AutomationPhase.Phase4Review));
+
+        AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.Done,
+            """
+### 阶段 1: 项目调研
+
+- [x] **T1.1**: 生成 task.md
+
+### 阶段 2: 计划编排
+
+- [x] **T2.1**: 完成执行规划
+
+### 阶段 3: 执行
+
+- [x] **T3.1**: 实现阶段任务
+
+### 阶段 4: 复核
+
+- [x] **T4.1**: 最终复核
+""");
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseReviewDecisionPacket(
+                AutomationPhase.Phase4Review,
+                1,
+                "complete",
+                taskMdPath,
+                TaskMdStatus.Done));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.Completed));
+    }
+
+    [Fact(DisplayName = "test_phase3_execution_report_missing_phase_is_rejected")]
+    public async Task Phase3ExecutionReportMissingPhaseIsRejectedAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var taskMdPath = AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.PendingPlan,
+            """
+### 阶段 1: 项目调研
+
+- [ ] **T1.1**: 生成 task.md
+""");
+
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase1Research,
+                1,
+                taskMdPath,
+                TaskMdStatus.PendingPlan));
+        await coordinator.StartAsync(session, CreateManualSettings());
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+        await coordinator.ApproveAsync(null);
+
+        AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.Planned,
+            """
+### 阶段 1: 项目调研
+
+- [x] **T1.1**: 生成 task.md
+
+### 阶段 2: 计划编排
+
+- [x] **T2.1**: 完成执行规划
+
+### 阶段 3: 执行
+
+- [ ] **T3.1**: 实现阶段任务
+""");
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase2Planning,
+                1,
+                taskMdPath,
+                TaskMdStatus.Planned));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+        await coordinator.ApproveAsync(null);
+
+        AutomationTestHelpers.WriteTaskMd(
+            session,
+            TaskMdStatus.InProgress,
+            """
+### 阶段 1: 项目调研
+
+- [x] **T1.1**: 生成 task.md
+
+### 阶段 2: 计划编排
+
+- [x] **T2.1**: 完成执行规划
+
+### 阶段 3: 执行
+
+- [ ] **T3.1**: 实现阶段任务
+""");
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase3Execution,
+                1,
+                taskMdPath,
+                TaskMdStatus.InProgress));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+        await coordinator.ApproveAsync(null);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForCodexReport));
+
+        fakeWezTerm.SetPaneText(session.RightPaneId, AutomationTestHelpers.BuildExecutionReportPacket(1));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PausedOnError));
+        Assert.Contains("phase3_execution", coordinator.GetCurrentState().LastError);
+    }
+
     private static AutomationSettings CreateManualSettings(int timeoutSeconds = 2)
     {
         return AutomationTestHelpers.CreateSettings(
