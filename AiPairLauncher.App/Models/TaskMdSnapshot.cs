@@ -16,5 +16,17 @@ public sealed class TaskMdSnapshot
 
     public string CurrentTaskRef { get; init; } = "暂无";
 
+    public string CurrentTaskRole { get; init; } = "暂无";
+
+    public string CurrentTaskDependencies { get; init; } = "暂无";
+
+    public string CurrentTaskRisk { get; init; } = "暂无";
+
+    public string CurrentTaskExecutionSummary { get; init; } = "暂无";
+
+    public int ReviewSectionCount { get; init; }
+
+    public string ReviewSummary { get; init; } = "暂无";
+
     public IReadOnlyList<string> Errors { get; init; } = [];
 }

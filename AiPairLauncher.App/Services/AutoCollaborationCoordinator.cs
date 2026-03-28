@@ -79,7 +79,10 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                 taskMdPath: BuildTaskMdPath(session),
                 taskMdStatus: TaskMdStatus.Unknown);
 
-            var bootstrapPrompt = AutomationPromptFactory.BuildClaudeBootstrapPrompt(session.WorkingDirectory, settings.InitialTaskPrompt);
+            var bootstrapPrompt = AutomationPromptFactory.BuildClaudeBootstrapPrompt(
+                session.WorkingDirectory,
+                settings.InitialTaskPrompt,
+                BuildTaskMdPath(session));
             await _wezTermService
                 .SendAutomationPromptAsync(session, AgentRole.Claude, bootstrapPrompt, settings.SubmitOnSend, cancellationToken)
                 .ConfigureAwait(false);
@@ -1209,7 +1212,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private string BuildTaskMdPath(LauncherSession session)
     {
-        return Path.Combine(session.WorkingDirectory, "task.md");
+        return TaskMdPathResolver.BuildDefault(session.WorkingDirectory);
     }
 
     private string ResolveTaskMdPath(ApprovalDraft draft)
@@ -1225,7 +1228,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         }
 
         EnsureSession();
-        return BuildTaskMdPath(_session!);
+        return TaskMdPathResolver.ResolveExistingOrDefault(_session!.WorkingDirectory);
     }
 
     private string ResolveTaskMdPath(AgentPacket packet)
@@ -1241,7 +1244,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         }
 
         EnsureSession();
-        return BuildTaskMdPath(_session!);
+        return TaskMdPathResolver.ResolveExistingOrDefault(_session!.WorkingDirectory);
     }
 
     private void EnsureTaskMdStatus(ApprovalDraft draft, TaskMdStatus expectedStatus)

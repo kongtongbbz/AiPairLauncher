@@ -24,12 +24,25 @@ public sealed class TaskMdParserTests
             ### 阶段 1: 项目调研
 
             - [x] **T1.1**: 生成 task.md
+              - 角色: planner
+              - 依赖: 无
+              - 风险: 低 — 仅生成任务文件
             - [ ] **T1.2**: 六角色协同规划
+              - 角色: coder
+              - 依赖: T1.1、T1.1a
+              - 风险: 中 — 需要补齐提示词
+              - **执行结果**: 尚未开始
 
             ### 阶段 2: 执行与复核
 
             - [ ] **T2.1**: 执行阶段任务  ⚠️ 执行中
             - [ ] **T2.2**: Phase 4 复核
+
+            ## 复核报告
+
+            ### Reviewer
+
+            - 已完成结构检查
             """,
             @"D:\repo\task.md");
 
@@ -42,7 +55,15 @@ public sealed class TaskMdParserTests
         Assert.Equal("阶段 1: 项目调研", result.Document.Stages[0].Heading);
         Assert.Equal("T1.2", result.Snapshot.CurrentTaskRef);
         Assert.Equal("阶段 1: 项目调研", result.Snapshot.CurrentStageHeading);
+        Assert.Equal("coder", result.Snapshot.CurrentTaskRole);
+        Assert.Equal("T1.1、T1.1a", result.Snapshot.CurrentTaskDependencies);
+        Assert.Equal("中 - 需要补齐提示词", result.Snapshot.CurrentTaskRisk);
+        Assert.Equal("尚未开始", result.Snapshot.CurrentTaskExecutionSummary);
+        Assert.Single(result.Document.ReviewSections);
+        Assert.Equal("- 已完成结构检查", result.Snapshot.ReviewSummary);
         Assert.True(result.Document.FindTask("T2.1")!.IsWarning);
+        Assert.Equal("planner", result.Document.FindTask("T1.1")!.Role);
+        Assert.Empty(result.Document.FindTask("T1.1")!.Dependencies);
     }
 
     [Fact(DisplayName = "test_parse_taskmd_reports_missing_status")]
@@ -155,5 +176,7 @@ public sealed class TaskMdParserTests
         Assert.NotNull(result.Document);
         Assert.Single(result.Document!.Stages);
         Assert.Equal(1, result.Document.TaskCount);
+        Assert.Single(result.Document.ReviewSections);
+        Assert.Equal(2, result.Document.ReviewSections[0].Lines.Count);
     }
 }

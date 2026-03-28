@@ -1295,7 +1295,9 @@ public sealed class WezTermService : IWezTermService
             .ToArray();
 
         return changedPaths.Length > 0 &&
-               changedPaths.All(static path => string.Equals(path, "task.md", StringComparison.OrdinalIgnoreCase));
+               changedPaths.All(static path =>
+                   string.Equals(path, "task.md", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, ".aipair/task.md", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string BuildWorktreeBranchName(LaunchRequest request)

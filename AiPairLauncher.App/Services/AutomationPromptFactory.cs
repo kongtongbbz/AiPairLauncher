@@ -6,24 +6,27 @@ namespace AiPairLauncher.App.Services;
 
 internal static class AutomationPromptFactory
 {
-    public static string BuildClaudeBootstrapPrompt(string workingDirectory, string taskPrompt)
+    public static string BuildClaudeBootstrapPrompt(string workingDirectory, string taskPrompt, string? taskMdPath = null)
     {
-        return BuildPhase1ResearchPrompt(workingDirectory, taskPrompt);
+        return BuildPhase1ResearchPrompt(workingDirectory, taskPrompt, taskMdPath);
     }
 
-    public static string BuildPhase1ResearchPrompt(string workingDirectory, string taskPrompt)
+    public static string BuildPhase1ResearchPrompt(string workingDirectory, string taskPrompt, string? taskMdPath = null)
     {
+        var resolvedTaskMdPath = string.IsNullOrWhiteSpace(taskMdPath)
+            ? TaskMdPathResolver.BuildDefault(workingDirectory)
+            : taskMdPath;
         return BuildPhasePlanPrompt(
             phase: AutomationPhase.Phase1Research,
             stageId: 1,
             workingDirectory: workingDirectory,
             taskPrompt: taskPrompt,
             phaseTitle: "Phase 1: 项目调研",
-            taskMdPath: Path.Combine(workingDirectory, "task.md"),
+            taskMdPath: resolvedTaskMdPath,
             taskMdStatus: "pending_plan",
             instructions:
             [
-                "你的任务是充分调研当前项目，并在工作目录根路径生成 task.md。",
+                "你的任务是充分调研当前项目，并生成 task.md。",
                 "本阶段只允许调研、读取、分析和生成 task.md，不要修改项目功能代码。",
                 "需要显式体现六角色视角：[planner]、[researcher]、[coder]、[reviewer]、[tester]、[debugger]。",
             ]);
