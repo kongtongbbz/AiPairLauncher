@@ -93,6 +93,27 @@ Quick safety check:
         Assert.Equal("T1.2", refreshed[0].StatusSnapshot.AutomationTaskRef);
     }
 
+    [Fact(DisplayName = "test_session_monitor_clears_stale_approval_preview_after_resume")]
+    public async Task SessionMonitorClearsStaleApprovalPreviewAfterResumeAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var service = new SessionMonitorService(fakeWezTerm, new FakeNotificationService());
+        var record = CreateRecord();
+        record.StatusSnapshot.ClaudePreview = "待审批计划\n旧摘要";
+
+        var refreshed = await service.RefreshAsync(
+            [record],
+            _ => new AutomationRunState
+            {
+                Phase = AutomationPhase.Phase3Execution,
+                Status = AutomationStageStatus.WaitingForCodexReport,
+                StatusDetail = "等待 Codex 执行",
+            });
+
+        Assert.Single(refreshed);
+        Assert.Equal("暂无输出", refreshed[0].StatusSnapshot.ClaudePreview);
+    }
+
     private static ManagedSessionRecord CreateRecord()
     {
         var session = AutomationTestHelpers.CreateSession();

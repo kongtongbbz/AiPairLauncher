@@ -77,10 +77,12 @@ internal static class AutomationPromptFactory
         builder.AppendLine("本阶段必须从 reviewer、tester、debugger 三个视角完成复核。");
         builder.AppendLine("输出要求：");
         builder.AppendLine("1. 回复必须且只能是 [AIPAIR_PACKET] 包。");
-        builder.AppendLine("2. role 固定 claude，kind 固定 review_decision，phase 固定 phase4_review。");
-        builder.AppendLine("3. 如果复核通过，decision 必须为 complete，且 task_md_status 应为 done。");
-        builder.AppendLine("4. 如果复核失败，decision 只能是 retry_stage 或 blocked。");
-        builder.AppendLine("5. 当 decision=retry_stage 时，必须提供 task_ref、task_progress、codex_brief。");
+        builder.AppendLine("2. role 固定 claude，kind 固定 review_decision。");
+        builder.AppendLine("3. 当 decision=complete 或 blocked 时，phase 固定 phase4_review。");
+        builder.AppendLine("4. 如果复核通过，decision 必须为 complete，且 task_md_status 应为 done。");
+        builder.AppendLine("5. 如果复核失败，decision 只能是 retry_stage 或 blocked。");
+        builder.AppendLine("6. 当 decision=retry_stage 时，phase 必须改为 phase3_execution，并提供 task_ref、task_progress、codex_brief。");
+        builder.AppendLine("7. 更新 task.md 时必须保留固定结构：文件头使用 `> 状态: ...`，任务区使用 `## 任务清单`，阶段标题使用 `### 阶段 N: ...`，复核结论请写在新的 `## 复核报告` 小节中。");
         return builder.ToString().TrimEnd();
     }
 
@@ -193,6 +195,8 @@ internal static class AutomationPromptFactory
         builder.AppendLine($"4. task_md_path 必须写 {taskMdPath}，task_md_status 必须写 {taskMdStatus}。");
         builder.AppendLine("5. 需要显式体现 planner、researcher、coder、reviewer、tester、debugger 六个角色。");
         builder.AppendLine("6. stage_id 必须是从 1 开始的正整数，禁止使用 0。");
+        builder.AppendLine("7. task.md 必须严格遵循以下语法：文件头使用 `> 状态: XXX`，任务区标题使用 `## 任务清单`，阶段标题使用 `### 阶段 N: ...`，任务行使用 `- [ ] **T1.1**: 描述` 或 `- [x] **T1.1**: 描述`。");
+        builder.AppendLine("8. 复核和补充说明不得继续放在 `## 任务清单` 之下；如需追加 reviewer/tester/debugger 结论，请放到新的二级标题，例如 `## 复核报告`。");
         builder.AppendLine();
         builder.AppendLine("""
 [AIPAIR_PACKET]

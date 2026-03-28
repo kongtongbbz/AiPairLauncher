@@ -729,9 +729,22 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             throw new InvalidOperationException("当前正在等待 Claude 的 stage_plan，但收到其他结构化包。");
         }
 
+        var isLegacyBootstrapPacket =
+            _state.Phase == AutomationPhase.Phase1Research &&
+            !_state.CurrentStageId.HasValue &&
+            packet.Phase == AutomationPhase.None &&
+            packet.StageId == 1;
+
         if (_state.Phase != AutomationPhase.None &&
-            packet.Phase != AutomationPhase.None &&
-            packet.Phase != _state.Phase)
+            packet.Phase == AutomationPhase.None &&
+            !isLegacyBootstrapPacket)
+        {
+            throw new InvalidOperationException($"当前 phase 为 {_state.Phase}，收到的 stage_plan 缺少 phase。");
+        }
+
+        if (_state.Phase != AutomationPhase.None &&
+            packet.Phase != _state.Phase &&
+            !isLegacyBootstrapPacket)
         {
             throw new InvalidOperationException($"当前 phase 为 {_state.Phase}，但收到 {packet.Phase} 的 stage_plan。");
         }
@@ -757,6 +770,11 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         if (packet.Role != AgentRole.Codex || packet.Kind != PacketKind.ExecutionReport)
         {
             throw new InvalidOperationException("当前正在等待 Codex 的 execution_report，但收到其他结构化包。");
+        }
+
+        if (_state.Phase == AutomationPhase.Phase3Execution && packet.Phase == AutomationPhase.None)
+        {
+            throw new InvalidOperationException("当前 Phase 3 执行要求 execution_report 显式携带 phase3_execution。");
         }
 
         if (packet.Phase != AutomationPhase.None && packet.Phase != AutomationPhase.Phase3Execution)
@@ -800,8 +818,12 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                         throw new InvalidOperationException($"Phase 4 retry_stage 必须保持当前阶段 {currentStageId}，收到阶段 {packet.StageId}。");
                     }
 
-                    if (packet.Phase != AutomationPhase.None &&
-                        packet.Phase != AutomationPhase.Phase3Execution)
+                    if (packet.Phase == AutomationPhase.None)
+                    {
+                        throw new InvalidOperationException("Phase 4 retry_stage 必须显式回退到 phase3_execution。");
+                    }
+
+                    if (packet.Phase != AutomationPhase.Phase3Execution)
                     {
                         throw new InvalidOperationException($"Phase 4 retry_stage 必须回退到 phase3_execution，收到 {packet.Phase}。");
                     }
@@ -813,8 +835,12 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                         throw new InvalidOperationException($"Phase 4 审定结论必须对应阶段 {currentStageId}，收到阶段 {packet.StageId}。");
                     }
 
-                    if (packet.Phase != AutomationPhase.None &&
-                        packet.Phase != AutomationPhase.Phase4Review)
+                    if (packet.Phase == AutomationPhase.None)
+                    {
+                        throw new InvalidOperationException("Phase 4 终态必须显式携带 phase4_review。");
+                    }
+
+                    if (packet.Phase != AutomationPhase.Phase4Review)
                     {
                         throw new InvalidOperationException($"Phase 4 终态必须保持 phase4_review，收到 {packet.Phase}。");
                     }
@@ -833,6 +859,11 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             case ReviewDecision.Complete when packet.StageId != currentStageId:
             case ReviewDecision.Blocked when packet.StageId != currentStageId:
                 throw new InvalidOperationException($"当前审定结论必须对应阶段 {currentStageId}，收到阶段 {packet.StageId}。");
+        }
+
+        if (_state.Phase == AutomationPhase.Phase3Execution && packet.Phase == AutomationPhase.None)
+        {
+            throw new InvalidOperationException("当前 Phase 3 审定要求 review_decision 显式携带 phase3_execution。");
         }
 
         if (packet.Phase != AutomationPhase.None && packet.Phase != AutomationPhase.Phase3Execution)

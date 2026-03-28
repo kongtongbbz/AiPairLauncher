@@ -260,7 +260,8 @@ task.md 生成后，Claude 输出结构化数据包通知 GUI:
 [AIPAIR_PACKET]
 role: claude
 kind: stage_plan
-stage_id: 0
+phase: phase1_research
+stage_id: 1
 title: 项目调研完成
 summary: <<<SUMMARY
 已完成项目调研并生成 task.md，共 {N} 个任务分 {M} 个阶段。
@@ -288,7 +289,7 @@ CODEX_BRIEF
 
 ### 3.5 GUI 侧行为
 
-1. 解析到 `stage_id: 0` 的 `stage_plan` → 识别为 Phase 1 完成信号
+1. 解析到 `phase: phase1_research` 的 `stage_plan` → 识别为 Phase 1 完成信号
 2. 在右侧面板展示 task.md 生成摘要
 3. 等待用户确认 → 触发 Phase 2
 
@@ -303,6 +304,12 @@ Claude 切换到 Plan Mode，读取 task.md，调用 6 个 SubAgent 进行协同
 ### 4.2 Phase 2 触发提示词
 
 用户确认后，GUI 向 Claude 发送:
+
+> 当前实现说明：
+> - 继续复用现有 `AutoCollaborationCoordinator`
+> - `stage_id` 保持从 `1` 开始，不再使用 `0`
+> - 通过新增 `phase` 字段区分 Phase 1/2/3/4
+> - App 侧对 `task.md` 只读解析和校验，不直接写回
 
 ```
 进入 Phase 2: 计划编排。
@@ -411,6 +418,7 @@ Claude 汇总六角色输出后，更新 task.md 状态为 `PLANNED`，并输出
 [AIPAIR_PACKET]
 role: claude
 kind: stage_plan
+phase: phase2_planning
 stage_id: 1
 title: Phase 2 计划编排完成
 summary: <<<SUMMARY
@@ -1093,21 +1101,21 @@ CODEX_BRIEF
 
 ### 11.1 第一阶段: 核心链路（MVP）
 
-- [ ] **O1**: 实现 Phase 1 调研提示词和 task.md 生成
-- [ ] **O2**: 实现 task.md 解析器（读取任务清单和状态）
-- [ ] **O3**: 实现 Phase 2 规划提示词（简化版，先跑通 planner + coder 两个角色）
-- [ ] **O4**: 实现 Phase 3 执行调度（按阶段串行）
-- [ ] **O5**: 实现 Phase 4 基础复核（构建+测试通过即完成）
+- [x] **O1**: 实现 Phase 1 调研提示词和 task.md 生成
+- [x] **O2**: 实现 task.md 解析器（读取任务清单和状态）
+- [x] **O3**: 实现 Phase 2 规划提示词（简化版，先跑通 planner + coder 两个角色）
+- [x] **O4**: 实现 Phase 3 执行调度（按阶段串行）
+- [x] **O5**: 实现 Phase 4 基础复核（构建+测试通过即完成）
 - [ ] **O6**: 实现 task.md 状态更新（完成标记和闭环标记）
 - [ ] **O7**: GUI 状态机扩展（新增 Phase 状态和展示）
 
 ### 11.2 第二阶段: 完整能力
 
-- [ ] **O8**: 实现六角色完整协同规划
+- [x] **O8**: 实现六角色完整协同规划
 - [ ] **O9**: 实现阶段内并行执行
 - [ ] **O10**: 实现 Phase 4 → Phase 3 局部回退
-- [ ] **O11**: 实现数据包协议扩展字段
-- [ ] **O12**: GUI 展示 task.md 实时进度视图
+- [x] **O11**: 实现数据包协议扩展字段
+- [x] **O12**: GUI 展示 task.md 实时进度视图
 - [ ] **O13**: 保护阈值可配置化
 
 ### 11.3 第三阶段: 体验优化
@@ -1162,9 +1170,9 @@ BuildCodexInteractiveShellCommand:
 | 组件 | 职责 |
 |------|------|
 | `TaskMdParser` | 解析 task.md 文件，提取任务清单和状态 |
-| `TaskMdUpdater` | 更新 task.md 的任务完成状态和执行结果 |
-| `PhaseCoordinator` | 管理 Phase 0→1→2→3→4 的宏观状态流转 |
-| `SubAgentDispatcher` | 根据任务角色分发到对应 SubAgent |
+| `TaskMdSnapshot` | 提供 task.md 的轻量摘要，供 GUI 和恢复流程使用 |
+| `AutomationPhase` | 用 `phase` 字段表达宏观阶段，不打破现有 `stage_id` 规则 |
+| `AutoCollaborationCoordinator` | 继续承担 Phase 0→1→2→3→4 的宏观流转，不新增独立 `PhaseCoordinator` |
 
 ---
 

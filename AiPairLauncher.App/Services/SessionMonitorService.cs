@@ -140,7 +140,7 @@ public sealed class SessionMonitorService : ISessionMonitorService
         record.StatusSnapshot.TaskMdStatus = state.TaskMdStatus;
         record.StatusSnapshot.AutomationRetryCount = state.CurrentStageRetryCount;
         record.StatusSnapshot.ClaudePreview = state.PendingApproval is null
-            ? record.StatusSnapshot.ClaudePreview
+            ? "暂无输出"
             : BuildApprovalPreview(state.PendingApproval);
 
         switch (state.Status)

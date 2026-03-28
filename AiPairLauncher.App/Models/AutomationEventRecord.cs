@@ -34,7 +34,24 @@ public sealed class AutomationEventRecord
 
     public DateTimeOffset OccurredAt { get; init; } = DateTimeOffset.Now;
 
-    public string DisplayStage => StageId.HasValue ? $"阶段 {StageId.Value}" : "阶段未定";
+    public string DisplayStage
+    {
+        get
+        {
+            var phaseText = Phase switch
+            {
+                AutomationPhase.Phase1Research => "Phase 1",
+                AutomationPhase.Phase2Planning => "Phase 2",
+                AutomationPhase.Phase3Execution => "Phase 3",
+                AutomationPhase.Phase4Review => "Phase 4",
+                _ => "Legacy",
+            };
+
+            return StageId.HasValue
+                ? $"{phaseText} · 阶段 {StageId.Value}"
+                : $"{phaseText} · 阶段未定";
+        }
+    }
 
     public string SeverityLabel => Status switch
     {

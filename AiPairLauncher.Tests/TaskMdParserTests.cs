@@ -61,6 +61,43 @@ public sealed class TaskMdParserTests
         Assert.Contains(result.Errors, static error => error.Contains("缺少文件头状态行", StringComparison.Ordinal));
     }
 
+    [Fact(DisplayName = "test_parse_taskmd_only_counts_stages_inside_task_section")]
+    public void ParseTaskMdOnlyCountsStagesInsideTaskSection()
+    {
+        var result = _parser.ParseContent(
+            """
+            # Task: 示例
+
+            > 状态: IN_PROGRESS
+
+            ## 调研发现
+
+            ### 关键文件
+
+            - `foo.cs`
+
+            ### 风险点
+
+            - 这里不是任务
+
+            ## 任务清单
+
+            ### 阶段 1: 项目调研
+
+            - [x] **T1.1**: 生成 task.md
+
+            ### 阶段 2: 执行
+
+            - [ ] **T2.1**: 执行任务
+            """);
+
+        Assert.True(result.IsValid);
+        Assert.NotNull(result.Document);
+        Assert.Equal(2, result.Document!.Stages.Count);
+        Assert.Equal("阶段 2: 执行", result.Snapshot.CurrentStageHeading);
+        Assert.Equal("T2.1", result.Snapshot.CurrentTaskRef);
+    }
+
     [Fact(DisplayName = "test_parse_taskmd_reports_invalid_status")]
     public void ParseTaskMdReportsInvalidStatus()
     {
@@ -86,5 +123,37 @@ public sealed class TaskMdParserTests
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, static error => error.Contains("未找到 task.md", StringComparison.Ordinal));
+    }
+
+    [Fact(DisplayName = "test_parse_taskmd_ignores_review_report_sections")]
+    public void ParseTaskMdIgnoresReviewReportSections()
+    {
+        var result = _parser.ParseContent(
+            """
+            # Task: 自动编排 2.0
+
+            > 状态: DONE
+
+            ## 任务清单
+
+            ### 阶段 1: 项目调研
+
+            - [x] **T1.1**: 生成 task.md
+
+            ## 复核报告
+
+            ### Reviewer
+
+            - 通过
+
+            ### Tester
+
+            - 通过
+            """);
+
+        Assert.True(result.IsValid);
+        Assert.NotNull(result.Document);
+        Assert.Single(result.Document!.Stages);
+        Assert.Equal(1, result.Document.TaskCount);
     }
 }

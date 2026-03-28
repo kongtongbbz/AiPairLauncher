@@ -12,6 +12,12 @@ public sealed partial class TaskMdParser
     [GeneratedRegex(@"^###\s+(?<heading>.+?)\s*$", RegexOptions.Multiline)]
     private static partial Regex StageRegex();
 
+    [GeneratedRegex(@"^##\s+任务清单\s*$", RegexOptions.Multiline)]
+    private static partial Regex TaskSectionRegex();
+
+    [GeneratedRegex(@"^##\s+.+?$", RegexOptions.Multiline)]
+    private static partial Regex SectionHeadingRegex();
+
     [GeneratedRegex(@"^-\s+\[(?<done>[ xX])\]\s+\*\*(?<taskRef>T[\w\.\-]+)\*\*:\s*(?<title>.+?)(?<warning>\s+⚠️.*)?$", RegexOptions.Multiline)]
     private static partial Regex TaskRegex();
 
@@ -73,13 +79,30 @@ public sealed partial class TaskMdParser
 
     private static IReadOnlyList<TaskMdStage> ParseStages(string content, List<string> errors)
     {
-        var stageMatches = StageRegex().Matches(content);
+        var taskSectionMatch = TaskSectionRegex().Match(content);
+        if (!taskSectionMatch.Success)
+        {
+            errors.Add("task.md 缺少“## 任务清单”章节。");
+            return [];
+        }
+
+        var taskSectionStartIndex = taskSectionMatch.Index;
+        var nextSectionIndex = SectionHeadingRegex()
+            .Matches(content)
+            .Cast<Match>()
+            .Where(match => match.Index > taskSectionStartIndex)
+            .Select(match => match.Index)
+            .DefaultIfEmpty(content.Length)
+            .First();
+
+        var taskSectionContent = content[taskSectionStartIndex..nextSectionIndex];
+        var stageMatches = StageRegex().Matches(taskSectionContent);
         var stages = new List<TaskMdStage>();
         for (var index = 0; index < stageMatches.Count; index++)
         {
             var stageMatch = stageMatches[index];
-            var nextStart = index + 1 < stageMatches.Count ? stageMatches[index + 1].Index : content.Length;
-            var block = content[stageMatch.Index..nextStart];
+            var nextStart = index + 1 < stageMatches.Count ? stageMatches[index + 1].Index : taskSectionContent.Length;
+            var block = taskSectionContent[stageMatch.Index..nextStart];
             var heading = stageMatch.Groups["heading"].Value.Trim();
             var tasks = ParseTasks(block, heading, errors);
             stages.Add(new TaskMdStage

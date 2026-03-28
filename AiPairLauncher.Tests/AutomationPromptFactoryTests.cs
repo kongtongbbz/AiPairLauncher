@@ -16,6 +16,8 @@ public sealed class AutomationPromptFactoryTests
         Assert.Contains("task.md", prompt, StringComparison.Ordinal);
         Assert.Contains("[planner]", prompt, StringComparison.Ordinal);
         Assert.Contains("[researcher]", prompt, StringComparison.Ordinal);
+        Assert.Contains("## 任务清单", prompt, StringComparison.Ordinal);
+        Assert.Contains("> 状态:", prompt, StringComparison.Ordinal);
     }
 
     [Fact(DisplayName = "test_build_phase2_prompt_contains_all_six_roles")]
@@ -30,6 +32,7 @@ public sealed class AutomationPromptFactoryTests
         Assert.Contains("[tester]", prompt, StringComparison.Ordinal);
         Assert.Contains("[debugger]", prompt, StringComparison.Ordinal);
         Assert.Contains("phase2_planning", prompt, StringComparison.Ordinal);
+        Assert.Contains("- [ ] **T1.1**:", prompt, StringComparison.Ordinal);
     }
 
     [Fact(DisplayName = "test_build_phase_revision_prompt_uses_phase_context")]
@@ -46,5 +49,15 @@ public sealed class AutomationPromptFactoryTests
 
         Assert.Contains("phase2_planning", prompt, StringComparison.Ordinal);
         Assert.Contains("请缩小范围", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact(DisplayName = "test_build_phase4_review_prompt_requires_retry_to_phase3_execution")]
+    public void BuildPhase4ReviewPromptRequiresRetryToPhase3Execution()
+    {
+        var prompt = AutomationPromptFactory.BuildPhase4ReviewPrompt("实现自动编排", @"D:\repo\task.md");
+
+        Assert.Contains("phase4_review", prompt, StringComparison.Ordinal);
+        Assert.Contains("retry_stage", prompt, StringComparison.Ordinal);
+        Assert.Contains("phase3_execution", prompt, StringComparison.Ordinal);
     }
 }
