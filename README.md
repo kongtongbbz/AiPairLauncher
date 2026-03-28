@@ -192,12 +192,12 @@ powershell -ExecutionPolicy Bypass -File .\artifacts\win-x64\install\install.ps1
 
 ## 自动编排模式
 
-勾选“自动模式”后，程序会固定使用免确认的自动执行路径，并在右侧面板执行四阶段闭环编排。当前实现仍然基于结构化数据包驱动，运行中会持续轮询 Claude / Codex 的 pane 输出，但流程已经扩展为：
+勾选“自动模式”后，程序会固定使用免确认的自动执行路径，并在自动编排页面执行四阶段闭环编排。当前实现仍然基于结构化数据包驱动，运行中会持续轮询 Claude / Codex 的 pane 输出，但流程已经扩展为：
 
-- `Phase 1: 项目调研`：Claude 调研仓库并生成 `task.md`，状态要求为 `PENDING_PLAN`
-- `Phase 2: 计划编排`：Claude 基于 `task.md` 输出六角色协同规划，状态要求为 `PLANNED`
-- `Phase 3: 任务执行`：Claude 产出最小可执行计划，Codex 按 `task_ref` 执行并回报，`task.md` 状态进入 `IN_PROGRESS`
-- `Phase 4: 复核验收`：Claude 从 reviewer / tester / debugger 视角复核，只有当 `task.md` 为 `DONE` 时才闭环完成
+- `Phase 1: 项目调研`：Claude 调研仓库并生成默认位于 `WorkingDirectory/.aipair/task.md` 的任务文档，状态要求为 `PENDING_PLAN`
+- `Phase 2: 计划编排`：Claude 基于任务文档输出六角色协同规划，状态要求为 `PLANNED`
+- `Phase 3: 任务执行`：Claude 产出最小可执行计划，Codex 按 `task_ref` 执行并回报，任务文档状态进入 `IN_PROGRESS`
+- `Phase 4: 复核验收`：Claude 从 reviewer / tester / debugger 视角复核，只有当任务文档为 `DONE` 时才闭环完成
 
 自动编排不会切换到常驻交互式 CLI 对话模式，而是继续使用受控的非交互命令执行模型：
 
@@ -231,14 +231,14 @@ powershell -ExecutionPolicy Bypass -File .\artifacts\win-x64\install\install.ps1
 ### 自动编排恢复
 
 - 自动编排的当前状态、最近待审批计划和阶段历史会写入本地状态库。
-- 自动编排快照现在会保留 `phase`、`task.md` 路径、`task.md` 状态和当前 `task_ref`，便于恢复后继续展示当前阶段与任务进度。
+- 自动编排快照现在会保留 `phase`、任务文档路径、任务文档状态和当前 `task_ref`，便于恢复后继续展示当前阶段与任务进度。
 - 如果应用关闭后再次打开，程序会恢复最近一次自动编排快照并重新展示到右侧过程视图。
 - 若恢复时仍处于“待审批”状态，可继续批准或退回；若处于轮询中状态，会在恢复后继续观察会话输出。
 
 ### 当前限制
 
 - 不提供内嵌交互式终端；终端输入与执行仍然以 WezTerm pane 为主，GUI 只负责只读预览和调度。
-- `task.md` 由 Claude / Codex 按提示词生成和更新，GUI 当前只负责读取、校验、展示，不直接改写仓库文件。
+- 默认任务文档路径为 `.aipair/task.md`；Claude / Codex 按提示词生成和更新，GUI 当前只负责读取、校验、展示，不直接改写仓库文件。
 - 当前的 `parallel_group` 只是协议和界面上的元数据，还没有实现真实多 worker 并行执行调度。
 - 当前只支持受管 `.worktrees` 目录的安全清理，不会自动合并分支。
 - 当前不会像 `agent-deck` 那样提供 Docker sandbox、MCP socket pooling、Telegram / Slack conductor 或成本看板。
