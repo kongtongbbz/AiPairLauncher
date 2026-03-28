@@ -13,7 +13,7 @@ public sealed class AutomationPromptFactoryTests
 
         Assert.Contains("Phase 1: 项目调研", prompt, StringComparison.Ordinal);
         Assert.Contains("phase1_research", prompt, StringComparison.Ordinal);
-        Assert.Contains("task.md", prompt, StringComparison.Ordinal);
+        Assert.Contains(@".aipair\task.md", prompt, StringComparison.Ordinal);
         Assert.Contains("[planner]", prompt, StringComparison.Ordinal);
         Assert.Contains("[researcher]", prompt, StringComparison.Ordinal);
         Assert.Contains("## 任务清单", prompt, StringComparison.Ordinal);

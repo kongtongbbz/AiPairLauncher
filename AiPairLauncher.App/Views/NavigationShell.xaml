@@ -1,0 +1,171 @@
+<UserControl x:Class="AiPairLauncher.App.Views.NavigationShell"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:viewModels="clr-namespace:AiPairLauncher.App.ViewModels.Pages"
+             xmlns:views="clr-namespace:AiPairLauncher.App.Views"
+             xmlns:pageViews="clr-namespace:AiPairLauncher.App.Views.Pages">
+    <UserControl.Resources>
+        <DataTemplate DataType="{x:Type viewModels:DashboardPageViewModel}">
+            <pageViews:DashboardPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type viewModels:SessionDetailPageViewModel}">
+            <pageViews:SessionDetailPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type viewModels:ContextBridgePageViewModel}">
+            <pageViews:ContextBridgePage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type viewModels:AutomationPageViewModel}">
+            <pageViews:AutomationPage />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type viewModels:SettingsPageViewModel}">
+            <pageViews:SettingsPage />
+        </DataTemplate>
+
+        <Style x:Key="NavButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundSoftBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Background="{DynamicResource AppBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="220" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Row="0"
+                Grid.Column="0"
+                Margin="18,18,12,18"
+                Style="{DynamicResource CardBorderStyle}">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock FontSize="22"
+                               FontWeight="SemiBold"
+                               Text="AiPairLauncher" />
+                    <TextBlock Margin="0,6,0,18"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Mission Control" />
+
+                    <Button Style="{StaticResource NavButtonStyle}"
+                            Tag="dashboard"
+                            Click="Navigate_Click"
+                            Content="仪表盘" />
+                    <Button Style="{StaticResource NavButtonStyle}"
+                            Tag="session-detail"
+                            Click="Navigate_Click"
+                            Content="会话详情" />
+                    <Button Style="{StaticResource NavButtonStyle}"
+                            Tag="context-bridge"
+                            Click="Navigate_Click"
+                            Content="上下文桥接" />
+                    <Grid Margin="0,0,0,8">
+                        <Button Style="{StaticResource NavButtonStyle}"
+                                Margin="0"
+                                Tag="automation"
+                                Click="Navigate_Click"
+                                Content="自动编排" />
+                        <Border Width="18"
+                                Height="18"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top"
+                                Background="{DynamicResource DangerBrush}"
+                                CornerRadius="9"
+                                Visibility="{Binding Core.HasPendingApproval, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <TextBlock HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="White"
+                                       Text="!" />
+                        </Border>
+                    </Grid>
+                    <Button Style="{StaticResource NavButtonStyle}"
+                            Tag="settings"
+                            Click="Navigate_Click"
+                            Content="设置" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Border Grid.Row="0"
+                Grid.Column="1"
+                Margin="0,18,18,18"
+                Style="{DynamicResource CardBorderStyle}">
+            <ContentControl Content="{Binding CurrentPageViewModel}" />
+        </Border>
+
+        <Border Grid.Row="1"
+                Grid.Column="0"
+                Grid.ColumnSpan="2"
+                Margin="18,0,18,12"
+                Padding="10,8"
+                CornerRadius="12"
+                Background="{DynamicResource CardBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderBrushSoft}"
+                BorderThickness="1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           Text="{Binding Core.FooterMessage}" />
+                <Button Grid.Column="1"
+                        Margin="12,0,10,0"
+                        Padding="10,4"
+                        Content="日志"
+                        Click="ToggleLogDrawer_Click" />
+                <TextBlock Grid.Column="2"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           Text="{Binding Core.AppVersionText}" />
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2"
+                Grid.Column="0"
+                Grid.ColumnSpan="2"
+                Margin="18,0,18,18">
+            <Border.RenderTransform>
+                <TranslateTransform Y="12" />
+            </Border.RenderTransform>
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Setter Property="Opacity" Value="0" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsLogDrawerOpen}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <DataTrigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                         To="1"
+                                                         Duration="0:0:0.18" />
+                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                                         To="0"
+                                                         Duration="0:0:0.18" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </DataTrigger.EnterActions>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding IsLogDrawerOpen}" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Setter Property="Opacity" Value="0" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <views:LogDrawer />
+        </Border>
+    </Grid>
+</UserControl>

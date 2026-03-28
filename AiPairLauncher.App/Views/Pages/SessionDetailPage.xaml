@@ -1,0 +1,169 @@
+<UserControl x:Class="AiPairLauncher.App.Views.Pages.SessionDetailPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+            <Border Style="{DynamicResource CardBorderStyle}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel>
+                        <TextBlock FontSize="22"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding Core.SelectedSessionDisplayName}" />
+                        <TextBlock Margin="0,6,0,0"
+                                   Foreground="{DynamicResource AccentBrush}"
+                                   Text="{Binding Core.SelectedSessionStatus}" />
+                        <TextBlock Margin="0,6,0,0"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Text="{Binding Core.SelectedSessionStatusDetail}" />
+                    </StackPanel>
+
+                    <WrapPanel Grid.Column="1"
+                               HorizontalAlignment="Right"
+                               VerticalAlignment="Top">
+                        <Button Margin="0,0,10,10"
+                                Content="加载选中会话"
+                                Click="ReloadLastSession_Click"
+                                IsEnabled="{Binding Core.CanStart}" />
+                        <Button Margin="0,0,10,10"
+                                Content="重连会话"
+                                Click="ReconnectSession_Click"
+                                IsEnabled="{Binding Core.CanReconnectSession}" />
+                        <Button Margin="0,0,10,10"
+                                Content="聚焦 Claude"
+                                Click="FocusClaudePane_Click"
+                                IsEnabled="{Binding Core.CanFocusSelectedSession}" />
+                        <Button Margin="0,0,10,10"
+                                Content="聚焦 Codex"
+                                Click="FocusCodexPane_Click"
+                                IsEnabled="{Binding Core.CanFocusSelectedSession}" />
+                        <Button Margin="0,0,10,10"
+                                Content="归档"
+                                Click="ArchiveSession_Click"
+                                IsEnabled="{Binding Core.CanArchiveSelectedSession}" />
+                        <Button Content="恢复"
+                                Click="RestoreSession_Click"
+                                IsEnabled="{Binding Core.CanRestoreSelectedSession}" />
+                    </WrapPanel>
+                </Grid>
+            </Border>
+
+            <UniformGrid Margin="0,14,0,0"
+                         Columns="2">
+                <Border Margin="0,0,10,10"
+                        Style="{DynamicResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Text="运行态信息" />
+                        <TextBlock Margin="0,10,0,0"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Text="工作目录" />
+                        <TextBlock Margin="0,4,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Core.SelectedSessionWorkingDirectory}" />
+                        <TextBlock Margin="0,12,0,0"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Text="最近活动" />
+                        <TextBlock Margin="0,4,0,0"
+                                   Text="{Binding Core.SelectedSessionLastSeen}" />
+                        <TextBlock Margin="0,12,0,0"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Text="运行时绑定" />
+                        <TextBlock Margin="0,4,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Core.SelectedSessionRuntimeSummary}" />
+                        <TextBlock Margin="0,12,0,0"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Text="模板 / worktree" />
+                        <TextBlock Margin="0,4,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Core.SelectedSessionLaunchProfileSummary}" />
+                        <TextBlock Margin="0,4,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Core.SelectedSessionWorktreeSummary}" />
+                        <WrapPanel Margin="0,12,0,0">
+                            <Button Margin="0,0,10,0"
+                                    Content="打开目录"
+                                    Click="OpenWorktreePath_Click"
+                                    IsEnabled="{Binding Core.HasSelectedSession}" />
+                            <Button Margin="0,0,10,0"
+                                    Content="清理当前 worktree"
+                                    Click="CleanupWorktree_Click"
+                                    IsEnabled="{Binding Core.CanStart}" />
+                            <Button Content="清理孤儿 worktree"
+                                    Click="CleanupOrphanedWorktrees_Click"
+                                    IsEnabled="{Binding Core.CanStart}" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,0,0,10"
+                        Style="{DynamicResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Text="最近输出预览" />
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,10,0">
+                                <TextBlock FontWeight="SemiBold" Text="Claude" />
+                                <TextBox Margin="0,6,0,0"
+                                         Height="240"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Text="{Binding Core.SelectedSessionClaudePreview}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock FontWeight="SemiBold" Text="Codex" />
+                                <TextBox Margin="0,6,0,0"
+                                         Height="240"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Text="{Binding Core.SelectedSessionCodexPreview}" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <Border Style="{DynamicResource CardBorderStyle}">
+                <StackPanel>
+                    <TextBlock FontSize="18"
+                               FontWeight="SemiBold"
+                               Text="元数据编辑" />
+                    <UniformGrid Margin="0,12,0,0"
+                                 Columns="2">
+                        <StackPanel Margin="0,0,10,0">
+                            <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="显示名称" />
+                            <TextBox Margin="0,6,0,0"
+                                     Text="{Binding Core.EditableSessionDisplayName, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="分组" />
+                            <TextBox Margin="0,6,0,0"
+                                     Text="{Binding Core.EditableSessionGroupName, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                    </UniformGrid>
+                    <Button Margin="0,12,0,0"
+                            Width="160"
+                            HorizontalAlignment="Left"
+                            Content="保存会话信息"
+                            Click="SaveSessionMetadata_Click"
+                            IsEnabled="{Binding Core.CanSaveSessionMetadata}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

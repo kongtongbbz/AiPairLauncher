@@ -10,6 +10,8 @@ public sealed class TaskMdDocument
 
     public IReadOnlyList<TaskMdStage> Stages { get; init; } = [];
 
+    public IReadOnlyList<TaskMdReviewSection> ReviewSections { get; init; } = [];
+
     public int TaskCount => Stages.Sum(static stage => stage.Tasks.Count);
 
     public int CompletedTaskCount => Stages.Sum(stage => stage.Tasks.Count(static task => task.IsCompleted));
@@ -45,4 +47,21 @@ public sealed class TaskMdTask
     public bool IsCompleted { get; init; }
 
     public bool IsWarning { get; init; }
+
+    public string? Role { get; init; }
+
+    public IReadOnlyList<string> Dependencies { get; init; } = [];
+
+    public string? RiskLevel { get; init; }
+
+    public string? RiskDetail { get; init; }
+
+    public string? ExecutionSummary { get; init; }
+}
+
+public sealed class TaskMdReviewSection
+{
+    public string Heading { get; init; } = string.Empty;
+
+    public IReadOnlyList<string> Lines { get; init; } = [];
 }

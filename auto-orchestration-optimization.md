@@ -1,6 +1,7 @@
 # AiPairLauncher 自动编排模式深度优化方案
 
 > 版本: 2.0 | 目标: 四阶段闭环 + 六角色 SubAgent 协同编排
+> 2026-03-28 对齐说明: 运行时任务文档默认路径调整为 `{workingDirectory}/.aipair/task.md`，仓库内 GUI 设计清单迁移为 `docs/gui-redesign-task.md`
 
 ---
 
@@ -1106,17 +1107,20 @@ CODEX_BRIEF
 - [x] **O3**: 实现 Phase 2 规划提示词（简化版，先跑通 planner + coder 两个角色）
 - [x] **O4**: 实现 Phase 3 执行调度（按阶段串行）
 - [x] **O5**: 实现 Phase 4 基础复核（构建+测试通过即完成）
-- [ ] **O6**: 实现 task.md 状态更新（完成标记和闭环标记）
-- [ ] **O7**: GUI 状态机扩展（新增 Phase 状态和展示）
+- [x] **O6**: 实现 task.md 状态更新（完成标记和闭环标记）
+  - 对齐说明：通过 `task_md_path` / `task_md_status` 契约与 `.aipair/task.md` 默认路径闭环，GUI 继续只读校验和展示
+- [x] **O7**: GUI 状态机扩展（新增 Phase 状态和展示）
 
 ### 11.2 第二阶段: 完整能力
 
 - [x] **O8**: 实现六角色完整协同规划
 - [ ] **O9**: 实现阶段内并行执行
-- [ ] **O10**: 实现 Phase 4 → Phase 3 局部回退
+- [x] **O10**: 实现 Phase 4 → Phase 3 局部回退
+  - 对齐说明：Coordinator 已支持 Phase 4 `retry_stage` 回退到 `phase3_execution`，并有测试覆盖
 - [x] **O11**: 实现数据包协议扩展字段
 - [x] **O12**: GUI 展示 task.md 实时进度视图
-- [ ] **O13**: 保护阈值可配置化
+- [x] **O13**: 保护阈值可配置化
+  - 对齐说明：阈值已在 Launch Profile、ViewModel、持久化和 Coordinator 校验链路中打通
 
 ### 11.3 第三阶段: 体验优化
 
