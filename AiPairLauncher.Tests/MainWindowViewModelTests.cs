@@ -115,7 +115,7 @@ public sealed class MainWindowViewModelTests
         viewModel.ApplySessionCatalog([detachedAutoRecord], detachedAutoRecord.SessionId);
         viewModel.SelectedSessionRecord = viewModel.SessionRecords[0];
         Assert.True(viewModel.CanStartAutomation);
-        Assert.Contains("自动尝试恢复", viewModel.AutomationStartHint);
+        Assert.Contains("点击“启动”", viewModel.AutomationStartHint);
     }
 
     private static ManagedSessionRecord CreateRecord(string workspace, string groupName, SessionHealthStatus status, bool automationEnabledAtLaunch = false)
