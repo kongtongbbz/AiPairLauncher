@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using AiPairLauncher.App.ViewModels.Pages;
 
 namespace AiPairLauncher.App.Views.Pages;
@@ -62,7 +63,11 @@ public partial class DashboardPage : System.Windows.Controls.UserControl
         var sessionId = viewModel.Core.SelectedSessionRecord?.SessionId;
         if (!string.IsNullOrWhiteSpace(sessionId))
         {
-            ResolveHost()?.NavigateToSessionDetail(sessionId);
+            // 详情页包含多个 TextBox。将导航延后到当前输入事件完成后，
+            // 可以避免某些输入法在 ContextMenu/双击切页瞬间切换焦点时触发异常。
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.ApplicationIdle,
+                new Action(() => ResolveHost()?.NavigateToSessionDetail(sessionId)));
         }
     }
 

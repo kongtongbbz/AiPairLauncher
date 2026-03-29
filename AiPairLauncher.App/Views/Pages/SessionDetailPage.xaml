@@ -26,6 +26,7 @@
                                HorizontalAlignment="Right"
                                VerticalAlignment="Top">
                         <Button Margin="0,0,10,10"
+                                x:Name="ReloadSessionButton"
                                 Content="加载选中会话"
                                 Click="ReloadLastSession_Click"
                                 IsEnabled="{Binding Core.CanStart}" />
@@ -119,6 +120,9 @@
                                          Height="240"
                                          IsReadOnly="True"
                                          AcceptsReturn="True"
+                                         IsReadOnlyCaretVisible="False"
+                                         Focusable="False"
+                                         InputMethod.IsInputMethodEnabled="False"
                                          TextWrapping="Wrap"
                                          VerticalScrollBarVisibility="Auto"
                                          Text="{Binding Core.SelectedSessionClaudePreview}" />
@@ -129,6 +133,9 @@
                                          Height="240"
                                          IsReadOnly="True"
                                          AcceptsReturn="True"
+                                         IsReadOnlyCaretVisible="False"
+                                         Focusable="False"
+                                         InputMethod.IsInputMethodEnabled="False"
                                          TextWrapping="Wrap"
                                          VerticalScrollBarVisibility="Auto"
                                          Text="{Binding Core.SelectedSessionCodexPreview}" />
