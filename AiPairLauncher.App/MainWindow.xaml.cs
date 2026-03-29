@@ -298,7 +298,7 @@ public partial class MainWindow : Window
         await ExecuteActionAsync("启动自动模式", async () =>
         {
             await StartAutomationCoreAsync(false).ConfigureAwait(true);
-        });
+        }, showMessageBoxOnFailure: true);
     }
 
     internal async void StopAutomation_Click(object sender, RoutedEventArgs e)
@@ -367,7 +367,7 @@ public partial class MainWindow : Window
         await ExecuteActionAsync("重连会话", async () =>
         {
             await TryReconnectSelectedSessionAsync().ConfigureAwait(true);
-        });
+        }, showMessageBoxOnFailure: true);
     }
 
     internal async void FocusClaudePane_Click(object sender, RoutedEventArgs e)
@@ -865,7 +865,9 @@ public partial class MainWindow : Window
 
         if (!_currentSession.AutomationEnabledAtLaunch)
         {
-            throw new InvalidOperationException("当前会话不是自动模式会话，请勾选“自动交互模式”后重新启动 Ai Pair。");
+            _currentSession = PromoteSessionToAutomation(_currentSession);
+            await PersistPromotedAutomationSessionAsync(_currentSession).ConfigureAwait(true);
+            await LoadSessionCatalogAsync(_currentSession.SessionId, writeLog: false).ConfigureAwait(true);
         }
 
         var settings = new AutomationSettings
@@ -1015,6 +1017,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (await TryReconnectSessionByIdAsync(session.SessionId, writeLog: false).ConfigureAwait(true))
+        {
+            return;
+        }
+
         throw new InvalidOperationException(message);
     }
 
@@ -1074,8 +1081,25 @@ public partial class MainWindow : Window
             throw new InvalidOperationException("当前没有选中的会话。");
         }
 
+        var reconnected = await TryReconnectSessionByIdAsync(_viewModel.SelectedSessionRecord.SessionId, writeLog: true).ConfigureAwait(true);
+        if (!reconnected)
+        {
+            throw new InvalidOperationException(_viewModel.SelectedSessionReconnectSummary);
+        }
+    }
+
+    private async Task<bool> TryReconnectSessionByIdAsync(string sessionId, bool writeLog)
+    {
+        var selectedRecord = await _sessionStore.GetAsync(sessionId).ConfigureAwait(true)
+            ?? _viewModel.FindSessionById(sessionId);
+        if (selectedRecord is null)
+        {
+            _viewModel.SelectedSessionReconnectSummary = "当前会话记录不存在。";
+            return false;
+        }
+
         var reconnectResult = await _wezTermService
-            .TryReconnectSessionAsync(_viewModel.SelectedSessionRecord)
+            .TryReconnectSessionAsync(selectedRecord)
             .ConfigureAwait(true);
 
         if (!reconnectResult.Success || reconnectResult.Session is null || reconnectResult.RuntimeBinding is null)
@@ -1083,16 +1107,23 @@ public partial class MainWindow : Window
             _viewModel.SelectedSessionReconnectSummary = string.IsNullOrWhiteSpace(reconnectResult.FailureReason)
                 ? "重连失败"
                 : reconnectResult.FailureReason;
-            throw new InvalidOperationException(_viewModel.SelectedSessionReconnectSummary);
+            if (writeLog)
+            {
+                _viewModel.AppendLog($"重连会话失败: {_viewModel.SelectedSessionReconnectSummary}");
+                _viewModel.FooterMessage = _viewModel.SelectedSessionReconnectSummary;
+            }
+
+            return false;
         }
 
         var records = (await _sessionStore.ListAsync().ConfigureAwait(true))
             .Select(static record => record.Clone())
             .ToList();
-        var record = records.FirstOrDefault(item => string.Equals(item.SessionId, _viewModel.SelectedSessionRecord.SessionId, StringComparison.Ordinal));
+        var record = records.FirstOrDefault(item => string.Equals(item.SessionId, sessionId, StringComparison.Ordinal));
         if (record is null)
         {
-            throw new InvalidOperationException("选中的会话记录已不存在。");
+            _viewModel.SelectedSessionReconnectSummary = "选中的会话记录已不存在。";
+            return false;
         }
 
         record.Session = reconnectResult.Session;
@@ -1105,10 +1136,60 @@ public partial class MainWindow : Window
         record.UpdatedAt = DateTimeOffset.Now;
 
         await _sessionStore.SaveAllAsync(records, record.SessionId).ConfigureAwait(true);
+        _currentSession = reconnectResult.Session;
         _viewModel.SelectedSessionReconnectSummary = "刚刚成功重连";
-        _viewModel.AppendLog($"会话 {record.DisplayName} 已完成手动重连。");
+        if (writeLog)
+        {
+            _viewModel.AppendLog($"会话 {record.DisplayName} 已完成手动重连。");
+            _viewModel.FooterMessage = $"会话 {record.DisplayName} 已重连";
+        }
+
         await LoadSessionCatalogAsync(record.SessionId, writeLog: false).ConfigureAwait(true);
+        await RestoreAutomationSnapshotIfPossibleAsync(record.Session).ConfigureAwait(true);
+        await LoadAutomationHistoryAsync(record.SessionId).ConfigureAwait(true);
+        await LoadTaskMdRevisionHistoryAsync(record.SessionId).ConfigureAwait(true);
         await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
+        return true;
+    }
+
+    private static LauncherSession PromoteSessionToAutomation(LauncherSession session)
+    {
+        return new LauncherSession
+        {
+            SessionId = session.SessionId,
+            Workspace = session.Workspace,
+            WorkingDirectory = session.WorkingDirectory,
+            WezTermPath = session.WezTermPath,
+            SocketPath = session.SocketPath,
+            GuiPid = session.GuiPid,
+            LeftPaneId = session.LeftPaneId,
+            RightPaneId = session.RightPaneId,
+            RightPanePercent = session.RightPanePercent,
+            ClaudeObserverPaneId = session.ClaudeObserverPaneId,
+            CodexObserverPaneId = session.CodexObserverPaneId,
+            AutomationObserverEnabled = session.AutomationObserverEnabled,
+            ClaudePermissionMode = session.ClaudePermissionMode,
+            CodexMode = session.CodexMode,
+            AutomationEnabledAtLaunch = true,
+            CreatedAt = session.CreatedAt,
+        };
+    }
+
+    private async Task PersistPromotedAutomationSessionAsync(LauncherSession session)
+    {
+        var records = (await _sessionStore.ListAsync().ConfigureAwait(true))
+            .Select(static item => item.Clone())
+            .ToList();
+        var record = records.FirstOrDefault(item => string.Equals(item.SessionId, session.SessionId, StringComparison.Ordinal));
+        if (record is null)
+        {
+            return;
+        }
+
+        record.Session = session;
+        record.UpdatedAt = DateTimeOffset.Now;
+        record.LastSummary = "已切换为自动编排可用会话";
+        await _sessionStore.SaveAllAsync(records, session.SessionId).ConfigureAwait(true);
     }
 
     private void EnsureAutomationCoordinatorSubscription(string sessionId, IAutoCollaborationCoordinator coordinator)
@@ -1296,7 +1377,7 @@ public partial class MainWindow : Window
             : null;
     }
 
-    private async Task ExecuteActionAsync(string actionName, Func<Task> action)
+    private async Task ExecuteActionAsync(string actionName, Func<Task> action, bool showMessageBoxOnFailure = false)
     {
         if (_viewModel.IsBusy)
         {
@@ -1316,6 +1397,14 @@ public partial class MainWindow : Window
             _viewModel.StatusMessage = $"{actionName}失败";
             _viewModel.AppendLog($"{actionName}失败: {ex.Message}");
             _viewModel.FooterMessage = $"{actionName}失败，请检查日志。";
+            if (showMessageBoxOnFailure)
+            {
+                System.Windows.MessageBox.Show(
+                    ex.Message,
+                    $"AiPairLauncher - {actionName}",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Warning);
+            }
         }
         finally
         {

@@ -373,6 +373,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanRestoreSelectedSession));
             OnPropertyChanged(nameof(CanTogglePinSelectedSession));
             OnPropertyChanged(nameof(CanCopySelectedSessionConfig));
+            OnPropertyChanged(nameof(CanStartAutomation));
+            OnPropertyChanged(nameof(AutomationStartHint));
         }
     }
 
@@ -770,6 +772,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         set => SetField(ref _selectedSessionReconnectSummary, value);
     }
 
+    public string AutomationStartHint => SelectedSessionRecord switch
+    {
+        null => "请先选择或启动一个会话。",
+        { Session.AutomationEnabledAtLaunch: false } => "当前选中会话不是自动模式会话，请重新用“启动 Ai Pair”并勾选自动交互模式。",
+        _ when IsAutomationActive => "当前自动编排正在运行中。",
+        _ => "当前会话满足自动编排启动条件。",
+    };
+
     public string EditableSessionDisplayName
     {
         get => _editableSessionDisplayName;
@@ -1061,6 +1071,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanStartAutomation));
             OnPropertyChanged(nameof(CanStopAutomation));
             OnPropertyChanged(nameof(CanEditPhaseExecutors));
+            OnPropertyChanged(nameof(AutomationStartHint));
         }
     }
 
@@ -1072,7 +1083,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool AreModeSelectorsEnabled => !IsBusy && !AutoModeEnabled;
 
-    public bool CanStartAutomation => !IsBusy && HasSelectedSession && !IsAutomationActive;
+    public bool CanStartAutomation =>
+        !IsBusy &&
+        HasSelectedSession &&
+        SelectedSessionRecord!.Session.AutomationEnabledAtLaunch &&
+        SelectedSessionRecord.HealthStatus != SessionHealthStatus.Detached &&
+        !IsAutomationActive;
 
     public bool CanApproveAutomation => !IsBusy && HasPendingApproval;
 

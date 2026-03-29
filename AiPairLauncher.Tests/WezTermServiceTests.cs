@@ -122,6 +122,72 @@ public sealed class WezTermServiceTests : IDisposable
         Assert.True(result.RuntimeBinding!.IsAlive);
     }
 
+    [Fact(DisplayName = "test_try_reconnect_session_falls_back_to_socket_or_directory_match")]
+    public async Task TryReconnectSessionFallsBackToSocketOrDirectoryMatchAsync()
+    {
+        var socketDir = Path.Combine(_rootPath, ".local", "share", "wezterm");
+        Directory.CreateDirectory(socketDir);
+        var socketPath = Path.Combine(socketDir, "gui-sock-303");
+        await File.WriteAllTextAsync(socketPath, string.Empty);
+        _createdSocketFiles.Add(socketPath);
+
+        var runner = new FakeProcessRunner((command) =>
+        {
+            if (command.Arguments.Contains("list"))
+            {
+                return Task.FromResult(new ProcessResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = """
+[
+  { "pane_id": 30, "workspace": "workspace-renamed", "left_col": 0, "is_active": true, "cwd": "D:/repo/.worktrees/task", "size": { "rows": 40, "cols": 100 } },
+  { "pane_id": 31, "workspace": "workspace-renamed", "left_col": 0, "is_active": false, "cwd": "D:/repo/.worktrees/task", "size": { "rows": 18, "cols": 100 } },
+  { "pane_id": 40, "workspace": "workspace-renamed", "left_col": 100, "is_active": false, "cwd": "D:/repo/.worktrees/task", "size": { "rows": 40, "cols": 100 } },
+  { "pane_id": 41, "workspace": "workspace-renamed", "left_col": 100, "is_active": false, "cwd": "D:/repo/.worktrees/task", "size": { "rows": 18, "cols": 100 } }
+]
+""",
+                    StandardError = string.Empty,
+                });
+            }
+
+            throw new InvalidOperationException("unexpected command");
+        });
+        var service = new WezTermService(new CommandLocator(), runner);
+        var record = new ManagedSessionRecord
+        {
+            Session = new LauncherSession
+            {
+                SessionId = Guid.NewGuid().ToString("N"),
+                Workspace = "workspace-old",
+                WorkingDirectory = @"D:\repo\.worktrees\task",
+                WezTermPath = "wezterm.exe",
+                SocketPath = socketPath,
+                GuiPid = 303,
+                LeftPaneId = 11,
+                RightPaneId = 12,
+                RightPanePercent = 60,
+                AutomationEnabledAtLaunch = true,
+            },
+            RuntimeBinding = new SessionRuntimeBinding
+            {
+                SessionId = Guid.NewGuid().ToString("N"),
+                SocketPath = socketPath,
+                LeftPaneId = 11,
+                RightPaneId = 12,
+                IsAlive = false,
+            },
+            DisplayName = "fallback",
+        };
+
+        var result = await service.TryReconnectSessionAsync(record);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Session);
+        Assert.Equal("workspace-old", result.Session!.Workspace);
+        Assert.Equal(30, result.Session.LeftPaneId);
+        Assert.Equal(40, result.Session.RightPaneId);
+    }
+
     [Fact(DisplayName = "test_focus_pane_calls_activate_pane_for_selected_session")]
     public async Task FocusPaneCallsActivatePaneForSelectedSessionAsync()
     {

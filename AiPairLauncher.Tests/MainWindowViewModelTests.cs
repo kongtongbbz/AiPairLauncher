@@ -94,7 +94,22 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("已完成 2/6 · 当前阶段 阶段 2: 任务执行", viewModel.AutomationTaskProgressSummary);
     }
 
-    private static ManagedSessionRecord CreateRecord(string workspace, string groupName, SessionHealthStatus status)
+    [Fact(DisplayName = "test_can_start_automation_requires_automation_enabled_session")]
+    public void CanStartAutomationRequiresAutomationEnabledSession()
+    {
+        var viewModel = new MainWindowViewModel();
+        var manualRecord = CreateRecord("manual", "默认", SessionHealthStatus.Idle, automationEnabledAtLaunch: false);
+        var autoRecord = CreateRecord("auto", "默认", SessionHealthStatus.Idle, automationEnabledAtLaunch: true);
+
+        viewModel.ApplySessionCatalog([manualRecord, autoRecord], manualRecord.SessionId);
+        viewModel.SelectedSessionRecord = manualRecord;
+        Assert.False(viewModel.CanStartAutomation);
+
+        viewModel.SelectedSessionRecord = autoRecord;
+        Assert.True(viewModel.CanStartAutomation);
+    }
+
+    private static ManagedSessionRecord CreateRecord(string workspace, string groupName, SessionHealthStatus status, bool automationEnabledAtLaunch = false)
     {
         var session = new LauncherSession
         {
@@ -108,7 +123,7 @@ public sealed class MainWindowViewModelTests
             RightPanePercent = 60,
             ClaudePermissionMode = "default",
             CodexMode = "standard",
-            AutomationEnabledAtLaunch = false,
+            AutomationEnabledAtLaunch = automationEnabledAtLaunch,
         };
 
         return new ManagedSessionRecord

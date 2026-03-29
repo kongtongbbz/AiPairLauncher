@@ -157,18 +157,25 @@ public sealed class WezTermService : IWezTermService
         ArgumentNullException.ThrowIfNull(sessionRecord);
 
         var managedWorkspaces = await ListManagedWorkspacesAsync(cancellationToken).ConfigureAwait(false);
-        var matchedWorkspace = managedWorkspaces.FirstOrDefault(item =>
-            string.Equals(item.Workspace, sessionRecord.Session.Workspace, StringComparison.Ordinal));
+        var matchedWorkspace = FindBestReconnectWorkspace(managedWorkspaces, sessionRecord);
         if (matchedWorkspace is null)
         {
+            var availableWorkspaces = string.Join("、", managedWorkspaces.Select(static item => item.Workspace));
             return new SessionReconnectResult
             {
                 Success = false,
-                FailureReason = "未找到匹配的 WezTerm 工作区。",
+                FailureReason = managedWorkspaces.Count == 0
+                    ? "当前没有可用的 WezTerm 工作区。"
+                    : $"未找到匹配的 WezTerm 工作区（按工作区、socket、pane、工作目录均未命中）。当前可见工作区: {availableWorkspaces}",
             };
         }
 
         var mainPanes = SelectMainPanes(matchedWorkspace.Panes);
+        if (mainPanes.Count < 2)
+        {
+            mainPanes = SelectKnownMainPanes(matchedWorkspace.Panes, sessionRecord);
+        }
+
         if (mainPanes.Count < 2)
         {
             return new SessionReconnectResult
@@ -183,7 +190,7 @@ public sealed class WezTermService : IWezTermService
         var session = new LauncherSession
         {
             SessionId = sessionRecord.SessionId,
-            Workspace = sessionRecord.Session.Workspace,
+            Workspace = matchedWorkspace.Workspace,
             WorkingDirectory = leftPane.CurrentDirectory ?? sessionRecord.Session.WorkingDirectory,
             WezTermPath = sessionRecord.Session.WezTermPath,
             SocketPath = matchedWorkspace.SocketPath,
@@ -1359,6 +1366,124 @@ public sealed class WezTermService : IWezTermService
                 .First())
             .Take(2)
             .ToArray();
+    }
+
+    private static ManagedWorkspaceInfo? FindBestReconnectWorkspace(
+        IReadOnlyList<ManagedWorkspaceInfo> managedWorkspaces,
+        ManagedSessionRecord sessionRecord)
+    {
+        return managedWorkspaces
+            .Select(workspace => new
+            {
+                Workspace = workspace,
+                Score = ScoreReconnectWorkspace(workspace, sessionRecord),
+            })
+            .Where(static candidate => candidate.Score > 0)
+            .OrderByDescending(static candidate => candidate.Score)
+            .ThenByDescending(static candidate => candidate.Workspace.Panes.Count)
+            .Select(static candidate => candidate.Workspace)
+            .FirstOrDefault();
+    }
+
+    private static int ScoreReconnectWorkspace(ManagedWorkspaceInfo workspace, ManagedSessionRecord sessionRecord)
+    {
+        var score = 0;
+
+        if (string.Equals(workspace.Workspace, sessionRecord.Session.Workspace, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 100;
+        }
+
+        if (!string.IsNullOrWhiteSpace(sessionRecord.RuntimeBinding.SocketPath) &&
+            string.Equals(workspace.SocketPath, sessionRecord.RuntimeBinding.SocketPath, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 80;
+        }
+
+        var paneIds = workspace.Panes.Select(static pane => pane.PaneId).ToHashSet();
+        if (paneIds.Contains(sessionRecord.RuntimeBinding.LeftPaneId) &&
+            paneIds.Contains(sessionRecord.RuntimeBinding.RightPaneId))
+        {
+            score += 70;
+        }
+
+        var normalizedWorkingDirectory = NormalizePath(sessionRecord.Session.WorkingDirectory);
+        if (normalizedWorkingDirectory is null)
+        {
+            return score;
+        }
+
+        var mainPanes = SelectMainPanes(workspace.Panes);
+        if (mainPanes.Any(pane => PathsEqual(pane.CurrentDirectory, normalizedWorkingDirectory)))
+        {
+            score += 60;
+        }
+
+        if (workspace.Panes.Any(pane => PathsEqual(pane.CurrentDirectory, normalizedWorkingDirectory)))
+        {
+            score += 30;
+        }
+
+        var workingDirectoryName = Path.GetFileName(normalizedWorkingDirectory);
+        if (!string.IsNullOrWhiteSpace(workingDirectoryName) &&
+            workspace.Panes.Any(pane =>
+            {
+                var panePath = NormalizePath(pane.CurrentDirectory);
+                return !string.IsNullOrWhiteSpace(panePath) &&
+                       string.Equals(Path.GetFileName(panePath), workingDirectoryName, StringComparison.OrdinalIgnoreCase);
+            }))
+        {
+            score += 10;
+        }
+
+        return score;
+    }
+
+    private static IReadOnlyList<PaneInfo> SelectKnownMainPanes(IReadOnlyList<PaneInfo> panes, ManagedSessionRecord sessionRecord)
+    {
+        var preferredPaneIds = new[]
+        {
+            sessionRecord.RuntimeBinding.LeftPaneId,
+            sessionRecord.RuntimeBinding.RightPaneId,
+            sessionRecord.Session.LeftPaneId,
+            sessionRecord.Session.RightPaneId,
+        };
+
+        return preferredPaneIds
+            .Where(static paneId => paneId > 0)
+            .Distinct()
+            .Select(paneId => panes.FirstOrDefault(pane => pane.PaneId == paneId))
+            .Where(static pane => pane is not null)
+            .Cast<PaneInfo>()
+            .Take(2)
+            .ToArray();
+    }
+
+    private static bool PathsEqual(string? left, string? right)
+    {
+        var normalizedLeft = NormalizePath(left);
+        var normalizedRight = NormalizePath(right);
+        return !string.IsNullOrWhiteSpace(normalizedLeft) &&
+               !string.IsNullOrWhiteSpace(normalizedRight) &&
+               string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Path.GetFullPath(path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar))
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return path.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
     }
 
     private static int? SelectObserverPane(IReadOnlyList<PaneInfo> panes, int leftCol, int mainPaneId)
