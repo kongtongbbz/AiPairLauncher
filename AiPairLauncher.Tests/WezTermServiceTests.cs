@@ -122,6 +122,59 @@ public sealed class WezTermServiceTests : IDisposable
         Assert.True(result.RuntimeBinding!.IsAlive);
     }
 
+    [Fact(DisplayName = "test_try_reconnect_session_falls_back_to_known_pane_ids_when_main_topology_is_missing")]
+    public async Task TryReconnectSessionFallsBackToKnownPaneIdsWhenMainTopologyIsMissingAsync()
+    {
+        var socketDir = Path.Combine(_rootPath, ".local", "share", "wezterm");
+        Directory.CreateDirectory(socketDir);
+        var socketPath = Path.Combine(socketDir, "gui-sock-303");
+        await File.WriteAllTextAsync(socketPath, string.Empty);
+        _createdSocketFiles.Add(socketPath);
+
+        var runner = new FakeProcessRunner((command) =>
+        {
+            if (command.Arguments.Contains("list"))
+            {
+                return Task.FromResult(new ProcessResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = """
+[
+  { "pane_id": 10, "workspace": "test-workspace", "left_col": 0, "is_active": true, "cwd": "D:/repo/task", "size": { "rows": 40, "cols": 100 } },
+  { "pane_id": 11, "workspace": "test-workspace", "left_col": 0, "is_active": false, "cwd": "D:/repo/task", "size": { "rows": 18, "cols": 100 } }
+]
+""",
+                    StandardError = string.Empty,
+                });
+            }
+
+            throw new InvalidOperationException("unexpected command");
+        });
+
+        var service = new WezTermService(new CommandLocator(), runner);
+        var record = new ManagedSessionRecord
+        {
+            Session = AutomationTestHelpers.CreateSession(),
+            DisplayName = "test",
+            RuntimeBinding = new SessionRuntimeBinding
+            {
+                SessionId = "session-1",
+                GuiPid = 303,
+                SocketPath = socketPath,
+                LeftPaneId = 10,
+                RightPaneId = 11,
+                IsAlive = false,
+            },
+        };
+
+        var result = await service.TryReconnectSessionAsync(record);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Session);
+        Assert.Equal(10, result.Session!.LeftPaneId);
+        Assert.Equal(11, result.Session.RightPaneId);
+    }
+
     [Fact(DisplayName = "test_try_reconnect_session_falls_back_to_socket_or_directory_match")]
     public async Task TryReconnectSessionFallsBackToSocketOrDirectoryMatchAsync()
     {

@@ -777,7 +777,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public string AutomationStartHint => SelectedSessionRecord switch
     {
         null => "请先选择或启动一个会话。",
-        { HealthStatus: SessionHealthStatus.Detached } => "当前会话已断开，点击“重连会话”或直接点击“启动”自动尝试恢复。",
+        { HealthStatus: SessionHealthStatus.Detached } => "当前会话已断开，点击“重连会话”或直接点击“启动”自动尝试恢复，失败时会显示具体原因。",
         _ when IsAutomationActive => "当前自动编排正在运行中。",
         _ => "当前会话满足自动编排启动条件；普通双栏会话也可直接升级为自动编排会话。",
     };
@@ -1088,9 +1088,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public bool CanStartAutomation =>
         !IsBusy &&
         HasSelectedSession &&
-        SelectedSessionRecord is not null &&
-        SelectedSessionRecord.Session.AutomationEnabledAtLaunch &&
-        SelectedSessionRecord.HealthStatus != SessionHealthStatus.Detached &&
         !IsAutomationActive;
 
     public bool CanApproveAutomation => !IsBusy && HasPendingApproval;

@@ -178,6 +178,15 @@ public sealed class WezTermService : IWezTermService
 
         if (mainPanes.Count < 2)
         {
+            mainPanes = matchedWorkspace.Panes
+                .OrderBy(static pane => pane.LeftCol)
+                .ThenBy(static pane => pane.PaneId)
+                .Take(2)
+                .ToArray();
+        }
+
+        if (mainPanes.Count < 2)
+        {
             return new SessionReconnectResult
             {
                 Success = false,
@@ -190,7 +199,7 @@ public sealed class WezTermService : IWezTermService
         var session = new LauncherSession
         {
             SessionId = sessionRecord.SessionId,
-            Workspace = matchedWorkspace.Workspace,
+            Workspace = sessionRecord.Session.Workspace,
             WorkingDirectory = leftPane.CurrentDirectory ?? sessionRecord.Session.WorkingDirectory,
             WezTermPath = sessionRecord.Session.WezTermPath,
             SocketPath = matchedWorkspace.SocketPath,

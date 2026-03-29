@@ -856,6 +856,11 @@ public partial class MainWindow : Window
 
     private async Task StartAutomationCoreAsync(bool autoStartedByLaunch)
     {
+        if (_viewModel.SelectedSessionRecord is { HealthStatus: SessionHealthStatus.Detached })
+        {
+            await TryReconnectSelectedSessionAsync().ConfigureAwait(true);
+        }
+
         await EnsureSessionReadyAsync().ConfigureAwait(true);
 
         if (_currentSession is null)
@@ -1104,16 +1109,20 @@ public partial class MainWindow : Window
 
         if (!reconnectResult.Success || reconnectResult.Session is null || reconnectResult.RuntimeBinding is null)
         {
-            _viewModel.SelectedSessionReconnectSummary = string.IsNullOrWhiteSpace(reconnectResult.FailureReason)
-                ? "重连失败"
-                : reconnectResult.FailureReason;
-            if (writeLog)
+            reconnectResult = await TryRelaunchSessionAsync(selectedRecord, reconnectResult.FailureReason, writeLog).ConfigureAwait(true);
+            if (!reconnectResult.Success || reconnectResult.Session is null || reconnectResult.RuntimeBinding is null)
             {
-                _viewModel.AppendLog($"重连会话失败: {_viewModel.SelectedSessionReconnectSummary}");
-                _viewModel.FooterMessage = _viewModel.SelectedSessionReconnectSummary;
-            }
+                _viewModel.SelectedSessionReconnectSummary = string.IsNullOrWhiteSpace(reconnectResult.FailureReason)
+                    ? "重连失败"
+                    : reconnectResult.FailureReason;
+                if (writeLog)
+                {
+                    _viewModel.AppendLog($"重连会话失败: {_viewModel.SelectedSessionReconnectSummary}");
+                    _viewModel.FooterMessage = _viewModel.SelectedSessionReconnectSummary;
+                }
 
-            return false;
+                return false;
+            }
         }
 
         var records = (await _sessionStore.ListAsync().ConfigureAwait(true))
@@ -1150,6 +1159,91 @@ public partial class MainWindow : Window
         await LoadTaskMdRevisionHistoryAsync(record.SessionId).ConfigureAwait(true);
         await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
         return true;
+    }
+
+    private async Task<SessionReconnectResult> TryRelaunchSessionAsync(
+        ManagedSessionRecord sessionRecord,
+        string? failureReason,
+        bool writeLog)
+    {
+        var failureText = string.IsNullOrWhiteSpace(failureReason) ? "未找到可附着的现有工作区" : failureReason.Trim();
+        if (writeLog)
+        {
+            _viewModel.AppendLog($"重连未命中现有工作区，尝试按原配置重启会话。原因: {failureText}");
+        }
+
+        var request = new LaunchRequest
+        {
+            Workspace = sessionRecord.Session.Workspace,
+            WorkingDirectory = sessionRecord.Session.WorkingDirectory,
+            ResolvedWorkingDirectory = sessionRecord.Session.WorkingDirectory,
+            ClaudePermissionMode = sessionRecord.Session.ClaudePermissionMode,
+            CodexMode = sessionRecord.Session.CodexMode,
+            AutomationEnabled = sessionRecord.Session.AutomationEnabledAtLaunch,
+            AutomationObserverEnabled = sessionRecord.Session.AutomationObserverEnabled,
+            RightPanePercent = sessionRecord.Session.RightPanePercent,
+            UseWorktree = false,
+            WorktreeStrategy = "none",
+            StartupTimeoutSeconds = 20,
+        };
+
+        try
+        {
+            var session = await _wezTermService
+                .StartAiPairAsync(request)
+                .ConfigureAwait(true);
+
+            var restoredSession = new LauncherSession
+            {
+                SessionId = sessionRecord.SessionId,
+                Workspace = session.Workspace,
+                WorkingDirectory = session.WorkingDirectory,
+                WezTermPath = session.WezTermPath,
+                SocketPath = session.SocketPath,
+                GuiPid = session.GuiPid,
+                LeftPaneId = session.LeftPaneId,
+                RightPaneId = session.RightPaneId,
+                RightPanePercent = session.RightPanePercent,
+                ClaudeObserverPaneId = session.ClaudeObserverPaneId,
+                CodexObserverPaneId = session.CodexObserverPaneId,
+                AutomationObserverEnabled = session.AutomationObserverEnabled,
+                ClaudePermissionMode = session.ClaudePermissionMode,
+                CodexMode = session.CodexMode,
+                AutomationEnabledAtLaunch = session.AutomationEnabledAtLaunch,
+                CreatedAt = DateTimeOffset.Now,
+            };
+
+            if (writeLog)
+            {
+                _viewModel.AppendLog($"已按原配置重启会话: {restoredSession.Workspace}");
+            }
+
+            return new SessionReconnectResult
+            {
+                Success = true,
+                Session = restoredSession,
+                RuntimeBinding = new SessionRuntimeBinding
+                {
+                    SessionId = restoredSession.SessionId,
+                    GuiPid = restoredSession.GuiPid,
+                    SocketPath = restoredSession.SocketPath,
+                    LeftPaneId = restoredSession.LeftPaneId,
+                    RightPaneId = restoredSession.RightPaneId,
+                    ClaudeObserverPaneId = restoredSession.ClaudeObserverPaneId,
+                    CodexObserverPaneId = restoredSession.CodexObserverPaneId,
+                    IsAlive = true,
+                    UpdatedAt = DateTimeOffset.Now,
+                },
+            };
+        }
+        catch (Exception ex)
+        {
+            return new SessionReconnectResult
+            {
+                Success = false,
+                FailureReason = $"{failureText}；自动重启也失败: {ex.Message}",
+            };
+        }
     }
 
     private static LauncherSession PromoteSessionToAutomation(LauncherSession session)

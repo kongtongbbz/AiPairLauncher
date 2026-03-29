@@ -94,19 +94,28 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("已完成 2/6 · 当前阶段 阶段 2: 任务执行", viewModel.AutomationTaskProgressSummary);
     }
 
-    [Fact(DisplayName = "test_can_start_automation_requires_automation_enabled_session")]
-    public void CanStartAutomationRequiresAutomationEnabledSession()
+    [Fact(DisplayName = "test_can_start_automation_allows_promoting_manual_session")]
+    public void CanStartAutomationAllowsPromotingManualSession()
     {
         var viewModel = new MainWindowViewModel();
-        var manualRecord = CreateRecord("manual", "默认", SessionHealthStatus.Idle, automationEnabledAtLaunch: false);
-        var autoRecord = CreateRecord("auto", "默认", SessionHealthStatus.Idle, automationEnabledAtLaunch: true);
+        var manualRecord = CreateRecord("manual", "默认", SessionHealthStatus.Idle);
+        viewModel.ApplySessionCatalog([manualRecord], manualRecord.SessionId);
+        viewModel.SelectedSessionRecord = viewModel.SessionRecords[0];
 
-        viewModel.ApplySessionCatalog([manualRecord, autoRecord], manualRecord.SessionId);
-        viewModel.SelectedSessionRecord = manualRecord;
-        Assert.False(viewModel.CanStartAutomation);
-
-        viewModel.SelectedSessionRecord = autoRecord;
         Assert.True(viewModel.CanStartAutomation);
+        Assert.Contains("普通双栏会话也可直接升级为自动编排会话", viewModel.AutomationStartHint);
+    }
+
+    [Fact(DisplayName = "test_can_start_automation_allows_detached_auto_session_for_reconnect_flow")]
+    public void CanStartAutomationAllowsDetachedAutoSessionForReconnectFlow()
+    {
+        var viewModel = new MainWindowViewModel();
+        var detachedAutoRecord = CreateRecord("auto-detached", "默认", SessionHealthStatus.Detached, automationEnabledAtLaunch: true);
+
+        viewModel.ApplySessionCatalog([detachedAutoRecord], detachedAutoRecord.SessionId);
+        viewModel.SelectedSessionRecord = viewModel.SessionRecords[0];
+        Assert.True(viewModel.CanStartAutomation);
+        Assert.Contains("自动尝试恢复", viewModel.AutomationStartHint);
     }
 
     private static ManagedSessionRecord CreateRecord(string workspace, string groupName, SessionHealthStatus status, bool automationEnabledAtLaunch = false)
