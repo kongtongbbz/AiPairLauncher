@@ -368,6 +368,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
             ApplySelectedSessionRecord(value);
             OnPropertyChanged(nameof(HasSelectedSession));
+            OnPropertyChanged(nameof(CanStartAutomation));
+            OnPropertyChanged(nameof(CanReconnectSession));
             OnPropertyChanged(nameof(CanSaveSessionMetadata));
             OnPropertyChanged(nameof(CanArchiveSelectedSession));
             OnPropertyChanged(nameof(CanRestoreSelectedSession));
@@ -775,9 +777,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public string AutomationStartHint => SelectedSessionRecord switch
     {
         null => "请先选择或启动一个会话。",
-        { Session.AutomationEnabledAtLaunch: false } => "当前选中会话不是自动模式会话，请重新用“启动 Ai Pair”并勾选自动交互模式。",
+        { HealthStatus: SessionHealthStatus.Detached } => "当前会话已断开，点击“重连会话”或直接点击“启动”自动尝试恢复。",
         _ when IsAutomationActive => "当前自动编排正在运行中。",
-        _ => "当前会话满足自动编排启动条件。",
+        _ => "当前会话满足自动编排启动条件；普通双栏会话也可直接升级为自动编排会话。",
     };
 
     public string EditableSessionDisplayName
@@ -1086,7 +1088,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public bool CanStartAutomation =>
         !IsBusy &&
         HasSelectedSession &&
-        SelectedSessionRecord!.Session.AutomationEnabledAtLaunch &&
+        SelectedSessionRecord is not null &&
+        SelectedSessionRecord.Session.AutomationEnabledAtLaunch &&
         SelectedSessionRecord.HealthStatus != SessionHealthStatus.Detached &&
         !IsAutomationActive;
 

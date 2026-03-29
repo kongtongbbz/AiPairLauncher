@@ -16,6 +16,10 @@
                         <TextBlock Margin="0,6,0,0"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    Text="{Binding Core.AutomationStatusDetail}" />
+                        <TextBlock Margin="0,6,0,0"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Core.AutomationStartHint}" />
                     </StackPanel>
                     <WrapPanel Grid.Column="1"
                                HorizontalAlignment="Right">
