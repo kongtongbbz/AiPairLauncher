@@ -22,6 +22,40 @@ public sealed class AgentPacketParserTests
         Assert.Equal("执行首阶段", outcome.Packet.CodexBrief);
     }
 
+    [Fact(DisplayName = "test_parse_stage_plan_accepts_handoff_brief")]
+    public void ParseStagePlanAcceptsHandoffBrief()
+    {
+        var packet = """
+[AIPAIR_PACKET]
+role: claude
+kind: stage_plan
+stage_id: 1
+title: 首阶段
+summary: <<<SUMMARY
+阶段摘要
+SUMMARY
+scope: <<<SCOPE
+范围说明
+SCOPE
+steps: <<<STEPS
+1. 第一步
+STEPS
+acceptance: <<<ACCEPTANCE
+1. 验收项
+ACCEPTANCE
+handoff_brief: <<<HANDOFF
+用 handoff 交接摘要
+HANDOFF
+[/AIPAIR_PACKET]
+""";
+
+        var outcome = _parser.ParseLatest(packet);
+
+        Assert.Equal(PacketParseStatus.Success, outcome.Status);
+        Assert.NotNull(outcome.Packet);
+        Assert.Equal("用 handoff 交接摘要", outcome.Packet!.CodexBrief);
+    }
+
     [Fact(DisplayName = "test_parse_execution_report_valid_packet")]
     public void ParseExecutionReportValidPacket()
     {

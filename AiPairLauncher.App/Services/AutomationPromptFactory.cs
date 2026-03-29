@@ -6,17 +6,28 @@ namespace AiPairLauncher.App.Services;
 
 internal static class AutomationPromptFactory
 {
+    public static string BuildBootstrapPrompt(AgentRole executor, string workingDirectory, string taskPrompt, string? taskMdPath = null)
+    {
+        return BuildPhase1ResearchPrompt(executor, workingDirectory, taskPrompt, taskMdPath);
+    }
+
     public static string BuildClaudeBootstrapPrompt(string workingDirectory, string taskPrompt, string? taskMdPath = null)
     {
-        return BuildPhase1ResearchPrompt(workingDirectory, taskPrompt, taskMdPath);
+        return BuildBootstrapPrompt(AgentRole.Claude, workingDirectory, taskPrompt, taskMdPath);
     }
 
     public static string BuildPhase1ResearchPrompt(string workingDirectory, string taskPrompt, string? taskMdPath = null)
+    {
+        return BuildPhase1ResearchPrompt(AgentRole.Claude, workingDirectory, taskPrompt, taskMdPath);
+    }
+
+    public static string BuildPhase1ResearchPrompt(AgentRole executor, string workingDirectory, string taskPrompt, string? taskMdPath = null)
     {
         var resolvedTaskMdPath = string.IsNullOrWhiteSpace(taskMdPath)
             ? TaskMdPathResolver.BuildDefault(workingDirectory)
             : taskMdPath;
         return BuildPhasePlanPrompt(
+            executor,
             phase: AutomationPhase.Phase1Research,
             stageId: 1,
             workingDirectory: workingDirectory,
@@ -34,7 +45,13 @@ internal static class AutomationPromptFactory
 
     public static string BuildPhase2PlanningPrompt(string workingDirectory, string taskPrompt, string taskMdPath)
     {
+        return BuildPhase2PlanningPrompt(AgentRole.Claude, workingDirectory, taskPrompt, taskMdPath);
+    }
+
+    public static string BuildPhase2PlanningPrompt(AgentRole executor, string workingDirectory, string taskPrompt, string taskMdPath)
+    {
         return BuildPhasePlanPrompt(
+            executor,
             phase: AutomationPhase.Phase2Planning,
             stageId: 1,
             workingDirectory: workingDirectory,
@@ -52,7 +69,13 @@ internal static class AutomationPromptFactory
 
     public static string BuildPhase3KickoffPrompt(string workingDirectory, string taskPrompt, string taskMdPath)
     {
+        return BuildPhase3KickoffPrompt(AgentRole.Claude, workingDirectory, taskPrompt, taskMdPath);
+    }
+
+    public static string BuildPhase3KickoffPrompt(AgentRole executor, string workingDirectory, string taskPrompt, string taskMdPath)
+    {
         return BuildPhasePlanPrompt(
+            executor,
             phase: AutomationPhase.Phase3Execution,
             stageId: 1,
             workingDirectory: workingDirectory,
@@ -70,9 +93,14 @@ internal static class AutomationPromptFactory
 
     public static string BuildPhase4ReviewPrompt(string taskPrompt, string taskMdPath)
     {
+        return BuildPhase4ReviewPrompt(AgentRole.Claude, taskPrompt, taskMdPath);
+    }
+
+    public static string BuildPhase4ReviewPrompt(AgentRole executor, string taskPrompt, string taskMdPath)
+    {
         var builder = new StringBuilder();
         builder.AppendLine("你现在进入 AiPair 自动协作模式的 Phase 4: 复核验收。");
-        builder.AppendLine("你的角色是领导者 Claude，只负责最终复核并输出 review_decision。");
+        builder.AppendLine($"你的角色是 {ResolveExecutorLabel(executor)}，只负责最终复核并输出 review_decision。");
         builder.AppendLine($"task.md 路径: {taskMdPath}");
         builder.AppendLine("当前用户目标：");
         builder.AppendLine(taskPrompt.Trim());
@@ -80,11 +108,11 @@ internal static class AutomationPromptFactory
         builder.AppendLine("本阶段必须从 reviewer、tester、debugger 三个视角完成复核。");
         builder.AppendLine("输出要求：");
         builder.AppendLine("1. 回复必须且只能是 [AIPAIR_PACKET] 包。");
-        builder.AppendLine("2. role 固定 claude，kind 固定 review_decision。");
+        builder.AppendLine($"2. role 固定 {ResolveExecutorValue(executor)}，kind 固定 review_decision。");
         builder.AppendLine("3. 当 decision=complete 或 blocked 时，phase 固定 phase4_review。");
         builder.AppendLine("4. 如果复核通过，decision 必须为 complete，且 task_md_status 应为 done。");
         builder.AppendLine("5. 如果复核失败，decision 只能是 retry_stage 或 blocked。");
-        builder.AppendLine("6. 当 decision=retry_stage 时，phase 必须改为 phase3_execution，并提供 task_ref、task_progress、codex_brief。");
+        builder.AppendLine("6. 当 decision=retry_stage 时，phase 必须改为 phase3_execution，并提供 task_ref、task_progress、executor_brief。");
         builder.AppendLine("7. 更新 task.md 时必须保留固定结构：文件头使用 `> 状态: ...`，任务区使用 `## 任务清单`，阶段标题使用 `### 阶段 N: ...`，复核结论请写在新的 `## 复核报告` 小节中。");
         return builder.ToString().TrimEnd();
     }
@@ -111,16 +139,27 @@ internal static class AutomationPromptFactory
         return builder.ToString().TrimEnd();
     }
 
-    public static string BuildCodexExecutionPrompt(ApprovalDraft draft, string? userNote)
+    public static string BuildRevisionPrompt(ApprovalDraft draft, string? userNote, string taskPrompt)
+    {
+        return draft.Phase == AutomationPhase.None
+            ? BuildLegacyRevisionPrompt(draft, userNote, taskPrompt)
+            : BuildPhaseRevisionPrompt(draft, userNote, taskPrompt);
+    }
+
+    public static string BuildExecutionPrompt(AgentRole executor, ApprovalDraft draft, string? userNote)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("你现在是执行者 Codex。请执行下面的阶段任务，必要时修复代码、调试错误并自行验证。");
+        builder.AppendLine($"你现在是阶段负责人 {ResolveExecutorLabel(executor)}。请执行下面的阶段任务，必要时修复代码、调试错误并自行验证。");
         builder.AppendLine("完成后只输出一个 execution_report 结构化数据包，禁止在包外补充解释。");
         builder.AppendLine($"当前 Phase: {ToPhaseValue(draft.Phase)}");
         builder.AppendLine($"当前阶段: {draft.StageId}");
         if (!string.IsNullOrWhiteSpace(draft.TaskRef))
         {
             builder.AppendLine($"当前任务: {draft.TaskRef}");
+        }
+        if (!string.IsNullOrWhiteSpace(draft.ParallelGroup))
+        {
+            builder.AppendLine($"并行组: {draft.ParallelGroup}");
         }
         if (!string.IsNullOrWhiteSpace(userNote))
         {
@@ -129,45 +168,54 @@ internal static class AutomationPromptFactory
 
         builder.AppendLine();
         builder.AppendLine("执行指令如下：");
-        builder.AppendLine(draft.CodexBrief.Trim());
+        builder.AppendLine(draft.ExecutorBrief.Trim());
         builder.AppendLine();
         builder.AppendLine("回复要求：");
         builder.AppendLine("1. 回复以字面量 [AIPAIR_PACKET] 开头，并以字面量 [/AIPAIR_PACKET] 结束。");
-        builder.AppendLine("2. role 固定 codex，kind 固定 execution_report，phase 固定 phase3_execution，stage_id 固定当前阶段号。");
+        builder.AppendLine($"2. role 固定 {ResolveExecutorValue(executor)}，kind 固定 execution_report，phase 固定 phase3_execution，stage_id 固定当前阶段号。");
         builder.AppendLine("3. 必须包含字段：role、kind、phase、stage_id、status、summary、completed、verification、blockers、review_focus、body。");
         builder.AppendLine("4. 如可确定当前任务编号，请补充 task_ref；如可总结任务推进，请补充 task_progress。");
         return builder.ToString().TrimEnd();
     }
 
-    public static string BuildClaudeReviewPrompt(AgentPacket executionReport, string taskPrompt)
+    public static string BuildCodexExecutionPrompt(ApprovalDraft draft, string? userNote)
+    {
+        return BuildExecutionPrompt(AgentRole.Codex, draft, userNote);
+    }
+
+    public static string BuildReviewPrompt(AgentRole executor, AgentPacket executionReport, string taskPrompt)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("请作为领导者 Claude 审定下面这份 Codex execution_report。");
+        builder.AppendLine($"请作为阶段负责人 {ResolveExecutorLabel(executor)} 审定下面这份 execution_report。");
         builder.AppendLine("你的回复必须且只能是一个 review_decision 结构化数据包。");
         builder.AppendLine("当前用户目标：");
         builder.AppendLine(taskPrompt.Trim());
         builder.AppendLine();
-        builder.AppendLine("Codex 执行回报如下：");
+        builder.AppendLine("执行回报如下：");
         builder.AppendLine("<execution_report>");
         builder.AppendLine(executionReport.RawText);
         builder.AppendLine("</execution_report>");
         builder.AppendLine();
         builder.AppendLine("回复要求：");
         builder.AppendLine("1. 回复以字面量 [AIPAIR_PACKET] 开头，并以字面量 [/AIPAIR_PACKET] 结束。");
-        builder.AppendLine("2. role 固定 claude，kind 固定 review_decision，phase 固定 phase3_execution。");
+        builder.AppendLine($"2. role 固定 {ResolveExecutorValue(executor)}，kind 固定 review_decision，phase 固定 phase3_execution。");
         builder.AppendLine("3. decision 只能是 next_stage、retry_stage、complete、blocked。");
-        builder.AppendLine("4. 当 decision=next_stage 或 retry_stage 时，额外必须包含 title、summary、steps、acceptance、codex_brief。");
+        builder.AppendLine("4. 当 decision=next_stage 或 retry_stage 时，额外必须包含 title、summary、steps、acceptance、executor_brief。");
         return builder.ToString().TrimEnd();
+    }
+
+    public static string BuildClaudeReviewPrompt(AgentPacket executionReport, string taskPrompt)
+    {
+        return BuildReviewPrompt(AgentRole.Claude, executionReport, taskPrompt);
     }
 
     public static string BuildClaudeRevisionPrompt(ApprovalDraft draft, string? userNote, string taskPrompt)
     {
-        return draft.Phase == AutomationPhase.None
-            ? BuildLegacyRevisionPrompt(draft, userNote, taskPrompt)
-            : BuildPhaseRevisionPrompt(draft, userNote, taskPrompt);
+        return BuildRevisionPrompt(draft, userNote, taskPrompt);
     }
 
     private static string BuildPhasePlanPrompt(
+        AgentRole executor,
         AutomationPhase phase,
         int stageId,
         string workingDirectory,
@@ -179,7 +227,7 @@ internal static class AutomationPromptFactory
     {
         var builder = new StringBuilder();
         builder.AppendLine($"你现在进入 AiPair 自动协作模式的 {phaseTitle}。");
-        builder.AppendLine("你的角色是领导者 Claude，需要输出一个可供 GUI 审批的结构化 stage_plan。");
+        builder.AppendLine($"你的角色是 {ResolveExecutorLabel(executor)}，需要输出一个可供 GUI 审批的结构化 stage_plan。");
         builder.AppendLine($"当前工作目录: {workingDirectory}");
         builder.AppendLine($"task.md 路径: {taskMdPath}");
         builder.AppendLine("当前用户目标：");
@@ -193,23 +241,23 @@ internal static class AutomationPromptFactory
         builder.AppendLine();
         builder.AppendLine("结构化回复要求：");
         builder.AppendLine("1. 回复以字面量 [AIPAIR_PACKET] 开头，并以字面量 [/AIPAIR_PACKET] 结束。");
-        builder.AppendLine("2. 必须包含字段：role、kind、phase、subagent、stage_id、task_md_path、task_md_status、title、summary、scope、steps、acceptance、codex_brief。");
-        builder.AppendLine($"3. role 固定 claude，kind 固定 stage_plan，phase 固定 {ToPhaseValue(phase)}，subagent 固定 planner。");
+        builder.AppendLine("2. 必须包含字段：role、kind、phase、subagent、stage_id、task_md_path、task_md_status、title、summary、scope、steps、acceptance、executor_brief。");
+        builder.AppendLine($"3. role 固定 {ResolveExecutorValue(executor)}，kind 固定 stage_plan，phase 固定 {ToPhaseValue(phase)}，subagent 固定 planner。");
         builder.AppendLine($"4. task_md_path 必须写 {taskMdPath}，task_md_status 必须写 {taskMdStatus}。");
         builder.AppendLine("5. 需要显式体现 planner、researcher、coder、reviewer、tester、debugger 六个角色。");
         builder.AppendLine("6. stage_id 必须是从 1 开始的正整数，禁止使用 0。");
         builder.AppendLine("7. task.md 必须严格遵循以下语法：文件头使用 `> 状态: XXX`，任务区标题使用 `## 任务清单`，阶段标题使用 `### 阶段 N: ...`，任务行使用 `- [ ] **T1.1**: 描述` 或 `- [x] **T1.1**: 描述`。");
         builder.AppendLine("8. 复核和补充说明不得继续放在 `## 任务清单` 之下；如需追加 reviewer/tester/debugger 结论，请放到新的二级标题，例如 `## 复核报告`。");
         builder.AppendLine();
-        builder.AppendLine("""
+        builder.AppendLine($$"""
 [AIPAIR_PACKET]
-role: claude
+role: {{ResolveExecutorValue(executor)}}
 kind: stage_plan
-phase: PHASE_VALUE
+phase: {{ToPhaseValue(phase)}}
 subagent: planner
-stage_id: STAGE_VALUE
-task_md_path: TASK_MD_PATH
-task_md_status: TASK_MD_STATUS
+stage_id: {{stageId}}
+task_md_path: {{taskMdPath}}
+task_md_status: {{taskMdStatus}}
 title: 示例标题
 summary: <<<SUMMARY
 这里写阶段摘要
@@ -225,14 +273,11 @@ acceptance: <<<ACCEPTANCE
 1. 验收项一
 2. 验收项二
 ACCEPTANCE
-codex_brief: <<<CODEX_BRIEF
-这里写发给 Codex 的执行摘要
-CODEX_BRIEF
+executor_brief: <<<EXECUTOR_BRIEF
+这里写发给下一步执行者的执行摘要
+EXECUTOR_BRIEF
 [/AIPAIR_PACKET]
-""".Replace("PHASE_VALUE", ToPhaseValue(phase), StringComparison.Ordinal)
-            .Replace("STAGE_VALUE", stageId.ToString(), StringComparison.Ordinal)
-            .Replace("TASK_MD_PATH", taskMdPath, StringComparison.Ordinal)
-            .Replace("TASK_MD_STATUS", taskMdStatus, StringComparison.Ordinal));
+""");
         return builder.ToString().TrimEnd();
     }
 
@@ -246,6 +291,16 @@ CODEX_BRIEF
             AutomationPhase.Phase4Review => "phase4_review",
             _ => "phase3_execution",
         };
+    }
+
+    private static string ResolveExecutorValue(AgentRole executor)
+    {
+        return executor == AgentRole.Codex ? "codex" : "claude";
+    }
+
+    private static string ResolveExecutorLabel(AgentRole executor)
+    {
+        return executor == AgentRole.Codex ? "CODEX" : "Claude";
     }
 
     private static string BuildLegacyRevisionPrompt(ApprovalDraft draft, string? userNote, string taskPrompt)

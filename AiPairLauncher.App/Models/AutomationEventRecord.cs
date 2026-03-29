@@ -18,6 +18,12 @@ public sealed class AutomationEventRecord
 
     public TaskMdStatus TaskMdStatus { get; init; } = TaskMdStatus.Unknown;
 
+    public AgentRole? ActiveExecutor { get; init; }
+
+    public AutomationParallelismPolicy? ParallelismPolicy { get; init; }
+
+    public int? MaxParallelSubagents { get; init; }
+
     public string StatusDetail { get; init; } = string.Empty;
 
     public string LastPacketSummary { get; init; } = "暂无";
@@ -76,6 +82,9 @@ public sealed class AutomationEventRecord
             TaskRef = state.CurrentTaskRef,
             TaskMdPath = state.TaskMdPath,
             TaskMdStatus = state.TaskMdStatus,
+            ActiveExecutor = state.ActiveExecutor,
+            ParallelismPolicy = state.ParallelismPolicy,
+            MaxParallelSubagents = state.MaxParallelSubagents,
             StatusDetail = state.StatusDetail,
             LastPacketSummary = state.LastPacketSummary,
             LastError = state.LastError,

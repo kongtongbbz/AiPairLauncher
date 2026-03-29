@@ -36,6 +36,13 @@
                     <StackPanel>
                         <TextBlock FontWeight="SemiBold" Text="Phase 1" />
                         <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="项目调研" />
+                        <TextBlock Margin="0,10,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="执行器" />
+                        <ComboBox Margin="0,6,0,0"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Label"
+                                  ItemsSource="{Binding Core.PhaseExecutorOptions}"
+                                  SelectedValue="{Binding Core.SelectedPhase1ExecutorKey, UpdateSourceTrigger=PropertyChanged}"
+                                  IsEnabled="{Binding Core.CanEditPhaseExecutors}" />
                     </StackPanel>
                     <Border.Style>
                         <Style TargetType="Border">
@@ -54,6 +61,13 @@
                     <StackPanel>
                         <TextBlock FontWeight="SemiBold" Text="Phase 2" />
                         <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="计划编排" />
+                        <TextBlock Margin="0,10,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="执行器" />
+                        <ComboBox Margin="0,6,0,0"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Label"
+                                  ItemsSource="{Binding Core.PhaseExecutorOptions}"
+                                  SelectedValue="{Binding Core.SelectedPhase2ExecutorKey, UpdateSourceTrigger=PropertyChanged}"
+                                  IsEnabled="{Binding Core.CanEditPhaseExecutors}" />
                     </StackPanel>
                     <Border.Style>
                         <Style TargetType="Border">
@@ -72,6 +86,13 @@
                     <StackPanel>
                         <TextBlock FontWeight="SemiBold" Text="Phase 3" />
                         <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="任务执行" />
+                        <TextBlock Margin="0,10,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="执行器" />
+                        <ComboBox Margin="0,6,0,0"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Label"
+                                  ItemsSource="{Binding Core.PhaseExecutorOptions}"
+                                  SelectedValue="{Binding Core.SelectedPhase3ExecutorKey, UpdateSourceTrigger=PropertyChanged}"
+                                  IsEnabled="{Binding Core.CanEditPhaseExecutors}" />
                     </StackPanel>
                     <Border.Style>
                         <Style TargetType="Border">
@@ -90,6 +111,13 @@
                     <StackPanel>
                         <TextBlock FontWeight="SemiBold" Text="Phase 4" />
                         <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="复核验收" />
+                        <TextBlock Margin="0,10,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="执行器" />
+                        <ComboBox Margin="0,6,0,0"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Label"
+                                  ItemsSource="{Binding Core.PhaseExecutorOptions}"
+                                  SelectedValue="{Binding Core.SelectedPhase4ExecutorKey, UpdateSourceTrigger=PropertyChanged}"
+                                  IsEnabled="{Binding Core.CanEditPhaseExecutors}" />
                     </StackPanel>
                     <Border.Style>
                         <Style TargetType="Border">
@@ -126,6 +154,14 @@
                         <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding CurrentTaskExecutionSummary}" />
                         <TextBlock Margin="0,12,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="复核摘要" />
                         <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding ReviewSummary}" />
+                        <TextBlock Margin="0,12,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="当前负责人" />
+                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Core.AutomationActiveExecutorLabel}" />
+                        <TextBlock Margin="0,12,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="并发策略" />
+                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Core.AutomationParallelismPolicyLabel}" />
+                        <TextBlock Margin="0,12,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="并行组摘要" />
+                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Core.AutomationParallelGroupSummary}" />
+                        <TextBlock Margin="0,12,0,0" Foreground="{DynamicResource TextSecondaryBrush}" Text="回放入口" />
+                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Core.AutomationHistoryReplayHint}" />
                     </StackPanel>
                 </Border>
 
@@ -143,6 +179,7 @@
                                 <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding Core.PendingApprovalTitle}" />
                                 <TextBlock Margin="0,6,0,0" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Core.PendingApprovalSummary}" />
                                 <TextBlock Margin="0,6,0,0" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Core.AutomationInterventionReason}" />
+                                <TextBlock Margin="0,6,0,0" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Text="{Binding Core.PendingApprovalExecutorLabel}" />
                             </StackPanel>
                         </Border>
 
@@ -188,6 +225,18 @@
                                     <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="单阶段最大重试" />
                                     <TextBox Margin="0,6,0,0" Text="{Binding Core.AutomationMaxRetryPerStage, UpdateSourceTrigger=PropertyChanged}" />
                                 </StackPanel>
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="并发策略" />
+                                    <ComboBox Margin="0,6,0,0"
+                                              SelectedValuePath="Value"
+                                              DisplayMemberPath="Label"
+                                              ItemsSource="{Binding Core.AutomationParallelismPolicyOptions}"
+                                              SelectedValue="{Binding Core.SelectedAutomationParallelismPolicyKey, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="最大并行数" />
+                                    <TextBox Margin="0,6,0,0" Text="{Binding Core.AutomationMaxParallelSubagents, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
                             </UniformGrid>
                         </Expander>
                     </StackPanel>
@@ -209,6 +258,10 @@
                              TextWrapping="Wrap"
                              VerticalScrollBarVisibility="Auto"
                              Text="{Binding Core.AutomationTaskPrompt, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="1"
+                               Margin="0,104,0,0"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="{Binding Core.AutomationHistoryReplayHint}" />
                     <ListBox Grid.Row="2" Margin="0,12,0,0" ItemsSource="{Binding Core.AutomationHistory}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -232,6 +285,43 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                 </Grid>
+            </Border>
+
+            <Border Margin="0,14,0,0" Style="{DynamicResource CardBorderStyle}">
+                <StackPanel>
+                    <TextBlock FontSize="18" FontWeight="SemiBold" Text="task.md 变更历史" />
+                    <TextBlock Margin="0,6,0,0"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="用于回放自动编排过程中的任务文档状态变化。" />
+                    <ListBox Margin="0,12,0,0"
+                             ItemsSource="{Binding Core.AutomationTaskMdRevisions}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,8"
+                                        Padding="10"
+                                        CornerRadius="10"
+                                        Background="{DynamicResource CardBackgroundSoftBrush}"
+                                        BorderBrush="{DynamicResource BorderBrushSoft}"
+                                        BorderThickness="1">
+                                    <StackPanel>
+                                        <DockPanel>
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding Summary}" />
+                                            <TextBlock DockPanel.Dock="Right"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                                       Text="{Binding OccurredAt, StringFormat=HH:mm:ss}" />
+                                        </DockPanel>
+                                        <TextBlock Margin="0,4,0,0"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   Text="{Binding TaskMdStatus}" />
+                                        <TextBlock Margin="0,4,0,0"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   Text="{Binding ActiveExecutor}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </StackPanel>
             </Border>
         </StackPanel>
     </ScrollViewer>

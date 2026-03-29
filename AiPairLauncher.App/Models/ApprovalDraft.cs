@@ -34,5 +34,7 @@ public sealed class ApprovalDraft
 
     public IReadOnlyList<string> TaskProgress { get; init; } = [];
 
-    public string CodexBrief { get; init; } = string.Empty;
+    public string ExecutorBrief { get; init; } = string.Empty;
+
+    public string CodexBrief => ExecutorBrief;
 }

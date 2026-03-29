@@ -121,6 +121,43 @@ public sealed class SessionStoreTests : IDisposable
                 && item.DefaultPanelPreset == "automation");
     }
 
+    [Fact(DisplayName = "test_launch_profile_persists_phase_executor_matrix")]
+    public async Task LaunchProfilePersistsPhaseExecutorMatrixAsync()
+    {
+        var store = new SessionStore(_appDataPath);
+        var profile = new LaunchProfile
+        {
+            Name = "执行器矩阵测试",
+            Description = "执行器矩阵持久化",
+            DefaultGroupName = "执行组",
+            TransferInstructionTemplate = "继续执行并总结。",
+            DefaultPanelPreset = "automation",
+            ClaudePermissionMode = "plan",
+            CodexMode = "full-auto",
+            AutomationEnabled = true,
+            WorktreeStrategy = "subdirectory",
+        };
+
+        TestReflection.SetProperty(profile, "Phase1Executor", AgentRole.Codex);
+        TestReflection.SetProperty(profile, "Phase2Executor", AgentRole.Claude);
+        TestReflection.SetProperty(profile, "Phase3Executor", AgentRole.Claude);
+        TestReflection.SetProperty(profile, "Phase4Executor", AgentRole.Codex);
+        TestReflection.SetProperty(profile, "ParallelismPolicy", "auto");
+        TestReflection.SetProperty(profile, "MaxParallelSubagents", 3);
+
+        await store.SaveLaunchProfileAsync(profile);
+
+        var profiles = await store.ListProfilesAsync();
+        var loaded = profiles.Single(item => item.ProfileId == profile.ProfileId);
+
+        Assert.Equal("Codex", TestReflection.GetPropertyString(loaded, "Phase1Executor"));
+        Assert.Equal("Claude", TestReflection.GetPropertyString(loaded, "Phase2Executor"));
+        Assert.Equal("Claude", TestReflection.GetPropertyString(loaded, "Phase3Executor"));
+        Assert.Equal("Codex", TestReflection.GetPropertyString(loaded, "Phase4Executor"));
+        Assert.Equal("Auto", TestReflection.GetPropertyString(loaded, "ParallelismPolicy"));
+        Assert.Equal("3", TestReflection.GetPropertyString(loaded, "MaxParallelSubagents"));
+    }
+
     [Fact(DisplayName = "test_session_metadata_operations_persist_group_pin_and_name")]
     public async Task SessionMetadataOperationsPersistGroupPinAndNameAsync()
     {
@@ -175,7 +212,7 @@ public sealed class SessionStoreTests : IDisposable
                     Scope = "仅测试",
                     TaskMdPath = @"D:\repo\task.md",
                     TaskMdStatus = TaskMdStatus.Planned,
-                    CodexBrief = "执行验证",
+                    ExecutorBrief = "执行验证",
                 },
             },
         };
@@ -208,6 +245,47 @@ public sealed class SessionStoreTests : IDisposable
         Assert.Equal(AutomationPhase.Phase2Planning, events[0].Phase);
         Assert.Equal("T2.1", events[0].TaskRef);
         Assert.Equal(TaskMdStatus.Planned, events[0].TaskMdStatus);
+    }
+
+    [Fact(DisplayName = "test_automation_snapshot_persists_phase_executor_matrix")]
+    public async Task AutomationSnapshotPersistsPhaseExecutorMatrixAsync()
+    {
+        var store = new SessionStore(_appDataPath);
+        var session = CreateSession("workspace-automation-executor");
+        await store.SaveAsync(session);
+
+        var settings = new AutomationSettings
+        {
+            InitialTaskPrompt = "执行矩阵测试",
+            AdvancePolicy = AutomationAdvancePolicy.FullAutoLoop,
+        };
+        TestReflection.SetProperty(settings, "Phase1Executor", AgentRole.Codex);
+        TestReflection.SetProperty(settings, "Phase2Executor", AgentRole.Claude);
+        TestReflection.SetProperty(settings, "Phase3Executor", AgentRole.Codex);
+        TestReflection.SetProperty(settings, "Phase4Executor", AgentRole.Claude);
+        TestReflection.SetProperty(settings, "ParallelismPolicy", "balanced");
+        TestReflection.SetProperty(settings, "MaxParallelSubagents", 4);
+
+        await store.SaveAutomationSnapshotAsync(new PersistedAutomationSnapshot
+        {
+            SessionId = session.SessionId,
+            Settings = settings,
+            State = new AutomationRunState
+            {
+                Phase = AutomationPhase.Phase1Research,
+                Status = AutomationStageStatus.WaitingForClaudePlan,
+                StatusDetail = "等待计划",
+            },
+        });
+
+        var loaded = await store.GetAutomationSnapshotAsync(session.SessionId);
+        Assert.NotNull(loaded);
+        Assert.Equal("Codex", TestReflection.GetPropertyString(loaded!.Settings, "Phase1Executor"));
+        Assert.Equal("Claude", TestReflection.GetPropertyString(loaded.Settings, "Phase2Executor"));
+        Assert.Equal("Codex", TestReflection.GetPropertyString(loaded.Settings, "Phase3Executor"));
+        Assert.Equal("Claude", TestReflection.GetPropertyString(loaded.Settings, "Phase4Executor"));
+        Assert.Equal("Balanced", TestReflection.GetPropertyString(loaded.Settings, "ParallelismPolicy"));
+        Assert.Equal("4", TestReflection.GetPropertyString(loaded.Settings, "MaxParallelSubagents"));
     }
 
     [Fact(DisplayName = "test_builtin_launch_profiles_are_listed_in_selector")]

@@ -166,7 +166,9 @@ public sealed class SessionStore : ISessionStore
                 automation_enabled, automation_observer_enabled, automation_advance_policy,
                 automation_poll_interval_ms, automation_capture_lines, automation_timeout_seconds,
                 automation_max_auto_stages, automation_max_retry_per_stage, automation_submit_on_send,
-                worktree_strategy, created_at, updated_at
+                phase1_executor, phase2_executor, phase3_executor, phase4_executor,
+                parallelism_policy, max_parallel_subagents,
+                automation_template_key, worktree_strategy, created_at, updated_at
             FROM launch_profiles
             ORDER BY name;
             """;
@@ -192,13 +194,15 @@ public sealed class SessionStore : ISessionStore
         command.CommandText =
             """
             INSERT INTO automation_events (
-                event_id, session_id, phase, status, stage_id, task_ref, task_md_path, task_md_status, status_detail, last_packet_summary,
-                last_error, intervention_reason, pending_approval_json,
+                event_id, session_id, phase, status, stage_id, task_ref, task_md_path, task_md_status,
+                active_executor, parallelism_policy, max_parallel_subagents,
+                status_detail, last_packet_summary, last_error, intervention_reason, pending_approval_json,
                 auto_approved_stage_count, current_stage_retry_count, occurred_at
             )
             VALUES (
-                $event_id, $session_id, $phase, $status, $stage_id, $task_ref, $task_md_path, $task_md_status, $status_detail, $last_packet_summary,
-                $last_error, $intervention_reason, $pending_approval_json,
+                $event_id, $session_id, $phase, $status, $stage_id, $task_ref, $task_md_path, $task_md_status,
+                $active_executor, $parallelism_policy, $max_parallel_subagents,
+                $status_detail, $last_packet_summary, $last_error, $intervention_reason, $pending_approval_json,
                 $auto_approved_stage_count, $current_stage_retry_count, $occurred_at
             );
             """;
@@ -210,6 +214,9 @@ public sealed class SessionStore : ISessionStore
         AddParameter(command, "$task_ref", eventRecord.TaskRef);
         AddParameter(command, "$task_md_path", eventRecord.TaskMdPath);
         AddParameter(command, "$task_md_status", eventRecord.TaskMdStatus.ToString());
+        AddParameter(command, "$active_executor", eventRecord.ActiveExecutor?.ToString());
+        AddParameter(command, "$parallelism_policy", eventRecord.ParallelismPolicy?.ToString());
+        AddParameter(command, "$max_parallel_subagents", eventRecord.MaxParallelSubagents);
         AddParameter(command, "$status_detail", eventRecord.StatusDetail);
         AddParameter(command, "$last_packet_summary", eventRecord.LastPacketSummary);
         AddParameter(command, "$last_error", eventRecord.LastError);
@@ -235,8 +242,9 @@ public sealed class SessionStore : ISessionStore
         command.CommandText =
             """
             SELECT
-                event_id, session_id, phase, status, stage_id, task_ref, task_md_path, task_md_status, status_detail, last_packet_summary,
-                last_error, intervention_reason, pending_approval_json,
+                event_id, session_id, phase, status, stage_id, task_ref, task_md_path, task_md_status,
+                active_executor, parallelism_policy, max_parallel_subagents,
+                status_detail, last_packet_summary, last_error, intervention_reason, pending_approval_json,
                 auto_approved_stage_count, current_stage_retry_count, occurred_at
             FROM automation_events
             WHERE session_id = $session_id
@@ -260,14 +268,104 @@ public sealed class SessionStore : ISessionStore
                 TaskRef = ReadNullableString(reader, 5),
                 TaskMdPath = ReadNullableString(reader, 6),
                 TaskMdStatus = ParseTaskMdStatus(ReadNullableString(reader, 7)),
-                StatusDetail = reader.GetString(8),
-                LastPacketSummary = reader.GetString(9),
-                LastError = ReadNullableString(reader, 10),
-                InterventionReason = ReadNullableString(reader, 11),
-                PendingApproval = DeserializeJson<ApprovalDraft>(ReadNullableString(reader, 12)),
-                AutoApprovedStageCount = reader.GetInt32(13),
-                CurrentStageRetryCount = reader.GetInt32(14),
-                OccurredAt = ParseDbDateTime(reader.GetString(15)),
+                ActiveExecutor = ParseNullableAgentRole(ReadNullableString(reader, 8)),
+                ParallelismPolicy = ParseNullableParallelismPolicy(ReadNullableString(reader, 9)),
+                MaxParallelSubagents = ReadNullableInt(reader, 10),
+                StatusDetail = reader.GetString(11),
+                LastPacketSummary = reader.GetString(12),
+                LastError = ReadNullableString(reader, 13),
+                InterventionReason = ReadNullableString(reader, 14),
+                PendingApproval = DeserializeJson<ApprovalDraft>(ReadNullableString(reader, 15)),
+                AutoApprovedStageCount = reader.GetInt32(16),
+                CurrentStageRetryCount = reader.GetInt32(17),
+                OccurredAt = ParseDbDateTime(reader.GetString(18)),
+            });
+        }
+
+        return items;
+    }
+
+    public async Task SaveTaskMdRevisionAsync(TaskMdRevisionRecord revisionRecord, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(revisionRecord);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO task_md_revisions (
+                revision_id, session_id, task_md_path, task_md_status, phase, stage_id, task_ref,
+                active_executor, parallelism_policy, max_parallel_subagents,
+                content_hash, summary, occurred_at
+            )
+            VALUES (
+                $revision_id, $session_id, $task_md_path, $task_md_status, $phase, $stage_id, $task_ref,
+                $active_executor, $parallelism_policy, $max_parallel_subagents,
+                $content_hash, $summary, $occurred_at
+            );
+            """;
+        AddParameter(command, "$revision_id", revisionRecord.RevisionId);
+        AddParameter(command, "$session_id", revisionRecord.SessionId);
+        AddParameter(command, "$task_md_path", revisionRecord.TaskMdPath);
+        AddParameter(command, "$task_md_status", revisionRecord.TaskMdStatus.ToString());
+        AddParameter(command, "$phase", revisionRecord.Phase.ToString());
+        AddParameter(command, "$stage_id", revisionRecord.StageId);
+        AddParameter(command, "$task_ref", revisionRecord.TaskRef);
+        AddParameter(command, "$active_executor", revisionRecord.ActiveExecutor?.ToString());
+        AddParameter(command, "$parallelism_policy", revisionRecord.ParallelismPolicy?.ToString());
+        AddParameter(command, "$max_parallel_subagents", revisionRecord.MaxParallelSubagents);
+        AddParameter(command, "$content_hash", revisionRecord.ContentHash);
+        AddParameter(command, "$summary", revisionRecord.Summary);
+        AddParameter(command, "$occurred_at", ToDbString(revisionRecord.OccurredAt));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<TaskMdRevisionRecord>> ListTaskMdRevisionsAsync(
+        string sessionId,
+        int take = 50,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT
+                revision_id, session_id, task_md_path, task_md_status, phase, stage_id, task_ref,
+                active_executor, parallelism_policy, max_parallel_subagents,
+                content_hash, summary, occurred_at
+            FROM task_md_revisions
+            WHERE session_id = $session_id
+            ORDER BY occurred_at DESC
+            LIMIT $take;
+            """;
+        AddParameter(command, "$session_id", sessionId);
+        AddParameter(command, "$take", Math.Max(1, take));
+
+        var items = new List<TaskMdRevisionRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            items.Add(new TaskMdRevisionRecord
+            {
+                RevisionId = reader.GetString(0),
+                SessionId = reader.GetString(1),
+                TaskMdPath = ReadNullableString(reader, 2),
+                TaskMdStatus = ParseTaskMdStatus(ReadNullableString(reader, 3)),
+                Phase = ParseAutomationPhase(ReadNullableString(reader, 4)),
+                StageId = ReadNullableInt(reader, 5),
+                TaskRef = ReadNullableString(reader, 6),
+                ActiveExecutor = ParseNullableAgentRole(ReadNullableString(reader, 7)),
+                ParallelismPolicy = ParseNullableParallelismPolicy(ReadNullableString(reader, 8)),
+                MaxParallelSubagents = ReadNullableInt(reader, 9),
+                ContentHash = reader.GetString(10),
+                Summary = reader.GetString(11),
+                OccurredAt = ParseDbDateTime(reader.GetString(12)),
             });
         }
 
@@ -499,6 +597,13 @@ public sealed class SessionStore : ISessionStore
             AutomationEnabled = record.Session.AutomationEnabledAtLaunch,
             AutomationObserverEnabled = record.Session.AutomationObserverEnabled,
             AutomationAdvancePolicy = "full-auto-loop",
+            Phase1Executor = AgentRole.Claude,
+            Phase2Executor = AgentRole.Claude,
+            Phase3Executor = AgentRole.Codex,
+            Phase4Executor = AgentRole.Claude,
+            ParallelismPolicy = AutomationParallelismPolicy.Auto,
+            MaxParallelSubagents = 4,
+            AutomationTemplateKey = "feature",
             WorktreeStrategy = record.UsesWorktree ? "subdirectory" : "none",
             DefaultUseWorktree = record.UsesWorktree,
             DefaultWorktreeStrategy = record.UsesWorktree ? "subdirectory" : "none",
@@ -680,6 +785,13 @@ public sealed class SessionStore : ISessionStore
                 automation_max_auto_stages INTEGER NOT NULL,
                 automation_max_retry_per_stage INTEGER NOT NULL,
                 automation_submit_on_send INTEGER NOT NULL,
+                phase1_executor TEXT NOT NULL DEFAULT 'Claude',
+                phase2_executor TEXT NOT NULL DEFAULT 'Claude',
+                phase3_executor TEXT NOT NULL DEFAULT 'Codex',
+                phase4_executor TEXT NOT NULL DEFAULT 'Claude',
+                parallelism_policy TEXT NOT NULL DEFAULT 'Auto',
+                max_parallel_subagents INTEGER NOT NULL DEFAULT 4,
+                automation_template_key TEXT NOT NULL DEFAULT 'feature',
                 worktree_strategy TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -694,6 +806,9 @@ public sealed class SessionStore : ISessionStore
                 task_ref TEXT NULL,
                 task_md_path TEXT NULL,
                 task_md_status TEXT NOT NULL DEFAULT 'Unknown',
+                active_executor TEXT NULL,
+                parallelism_policy TEXT NULL,
+                max_parallel_subagents INTEGER NULL,
                 status_detail TEXT NOT NULL,
                 last_packet_summary TEXT NOT NULL,
                 last_error TEXT NULL,
@@ -713,6 +828,23 @@ public sealed class SessionStore : ISessionStore
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS task_md_revisions (
+                revision_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                task_md_path TEXT NULL,
+                task_md_status TEXT NOT NULL DEFAULT 'Unknown',
+                phase TEXT NOT NULL DEFAULT 'None',
+                stage_id INTEGER NULL,
+                task_ref TEXT NULL,
+                active_executor TEXT NULL,
+                parallelism_policy TEXT NULL,
+                max_parallel_subagents INTEGER NULL,
+                content_hash TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS app_state (
                 state_key TEXT PRIMARY KEY,
                 state_value TEXT NULL
@@ -729,9 +861,19 @@ public sealed class SessionStore : ISessionStore
         await EnsureColumnAsync(connection, "automation_events", "task_ref", "TEXT NULL", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "automation_events", "task_md_path", "TEXT NULL", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "automation_events", "task_md_status", "TEXT NOT NULL DEFAULT 'Unknown'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "automation_events", "active_executor", "TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "automation_events", "parallelism_policy", "TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "automation_events", "max_parallel_subagents", "INTEGER NULL", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "launch_profiles", "default_group_name", "TEXT NOT NULL DEFAULT '默认'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "launch_profiles", "transfer_instruction_template", "TEXT NOT NULL DEFAULT '请基于下面这段终端输出继续处理。先给出结论，再给出下一步动作。'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "launch_profiles", "default_panel_preset", "TEXT NOT NULL DEFAULT 'balanced'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "phase1_executor", "TEXT NOT NULL DEFAULT 'Claude'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "phase2_executor", "TEXT NOT NULL DEFAULT 'Claude'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "phase3_executor", "TEXT NOT NULL DEFAULT 'Codex'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "phase4_executor", "TEXT NOT NULL DEFAULT 'Claude'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "parallelism_policy", "TEXT NOT NULL DEFAULT 'Auto'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "max_parallel_subagents", "INTEGER NOT NULL DEFAULT 4", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "launch_profiles", "automation_template_key", "TEXT NOT NULL DEFAULT 'feature'", cancellationToken).ConfigureAwait(false);
         await EnsureDefaultLaunchProfilesAsync(connection, cancellationToken).ConfigureAwait(false);
         await ImportLegacySessionIfNeededAsync(connection, cancellationToken).ConfigureAwait(false);
     }
@@ -1156,7 +1298,9 @@ public sealed class SessionStore : ISessionStore
                 automation_enabled, automation_observer_enabled, automation_advance_policy,
                 automation_poll_interval_ms, automation_capture_lines, automation_timeout_seconds,
                 automation_max_auto_stages, automation_max_retry_per_stage, automation_submit_on_send,
-                worktree_strategy, created_at, updated_at
+                phase1_executor, phase2_executor, phase3_executor, phase4_executor,
+                parallelism_policy, max_parallel_subagents,
+                automation_template_key, worktree_strategy, created_at, updated_at
             )
             VALUES (
                 $profile_id, $name, $description, $working_directory, $workspace_prefix,
@@ -1165,7 +1309,9 @@ public sealed class SessionStore : ISessionStore
                 $automation_enabled, $automation_observer_enabled, $automation_advance_policy,
                 $automation_poll_interval_ms, $automation_capture_lines, $automation_timeout_seconds,
                 $automation_max_auto_stages, $automation_max_retry_per_stage, $automation_submit_on_send,
-                $worktree_strategy, $created_at, $updated_at
+                $phase1_executor, $phase2_executor, $phase3_executor, $phase4_executor,
+                $parallelism_policy, $max_parallel_subagents,
+                $automation_template_key, $worktree_strategy, $created_at, $updated_at
             )
             ON CONFLICT(profile_id) DO UPDATE SET
                 name = excluded.name,
@@ -1187,6 +1333,13 @@ public sealed class SessionStore : ISessionStore
                 automation_max_auto_stages = excluded.automation_max_auto_stages,
                 automation_max_retry_per_stage = excluded.automation_max_retry_per_stage,
                 automation_submit_on_send = excluded.automation_submit_on_send,
+                phase1_executor = excluded.phase1_executor,
+                phase2_executor = excluded.phase2_executor,
+                phase3_executor = excluded.phase3_executor,
+                phase4_executor = excluded.phase4_executor,
+                parallelism_policy = excluded.parallelism_policy,
+                max_parallel_subagents = excluded.max_parallel_subagents,
+                automation_template_key = excluded.automation_template_key,
                 worktree_strategy = excluded.worktree_strategy,
                 updated_at = excluded.updated_at;
             """;
@@ -1210,6 +1363,13 @@ public sealed class SessionStore : ISessionStore
         AddParameter(command, "$automation_max_auto_stages", launchProfile.AutomationMaxAutoStages);
         AddParameter(command, "$automation_max_retry_per_stage", launchProfile.AutomationMaxRetryPerStage);
         AddParameter(command, "$automation_submit_on_send", launchProfile.AutomationSubmitOnSend);
+        AddParameter(command, "$phase1_executor", launchProfile.Phase1Executor.ToString());
+        AddParameter(command, "$phase2_executor", launchProfile.Phase2Executor.ToString());
+        AddParameter(command, "$phase3_executor", launchProfile.Phase3Executor.ToString());
+        AddParameter(command, "$phase4_executor", launchProfile.Phase4Executor.ToString());
+        AddParameter(command, "$parallelism_policy", launchProfile.ParallelismPolicy.ToString());
+        AddParameter(command, "$max_parallel_subagents", launchProfile.MaxParallelSubagents);
+        AddParameter(command, "$automation_template_key", launchProfile.AutomationTemplateKey);
         AddParameter(command, "$worktree_strategy", launchProfile.WorktreeStrategy);
         AddParameter(command, "$created_at", ToDbString(launchProfile.CreatedAt));
         AddParameter(command, "$updated_at", ToDbString(launchProfile.UpdatedAt));
@@ -1304,6 +1464,44 @@ public sealed class SessionStore : ISessionStore
             : TaskMdStatus.Unknown;
     }
 
+    private static AgentRole ParseAgentRole(string? value, AgentRole fallback)
+    {
+        return Enum.TryParse<AgentRole>(value, ignoreCase: true, out var role)
+            ? role
+            : fallback;
+    }
+
+    private static AgentRole? ParseNullableAgentRole(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return Enum.TryParse<AgentRole>(value, ignoreCase: true, out var role)
+            ? role
+            : null;
+    }
+
+    private static AutomationParallelismPolicy ParseParallelismPolicy(string? value)
+    {
+        return Enum.TryParse<AutomationParallelismPolicy>(value, ignoreCase: true, out var policy)
+            ? policy
+            : AutomationParallelismPolicy.Auto;
+    }
+
+    private static AutomationParallelismPolicy? ParseNullableParallelismPolicy(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return Enum.TryParse<AutomationParallelismPolicy>(value, ignoreCase: true, out var policy)
+            ? policy
+            : null;
+    }
+
     private static ManagedSessionRecord CreateRecord(LauncherSession session)
     {
         return new ManagedSessionRecord
@@ -1349,7 +1547,7 @@ public sealed class SessionStore : ISessionStore
 
     private static LaunchProfile MapLaunchProfile(SqliteDataReader reader)
     {
-        var worktreeStrategy = reader.GetString(20);
+        var worktreeStrategy = reader.GetString(27);
         var name = reader.GetString(1);
         return new LaunchProfile
         {
@@ -1373,12 +1571,19 @@ public sealed class SessionStore : ISessionStore
             AutomationMaxAutoStages = reader.GetInt32(17),
             AutomationMaxRetryPerStage = reader.GetInt32(18),
             AutomationSubmitOnSend = reader.GetBoolean(19),
+            Phase1Executor = ParseAgentRole(ReadNullableString(reader, 20), AgentRole.Claude),
+            Phase2Executor = ParseAgentRole(ReadNullableString(reader, 21), AgentRole.Claude),
+            Phase3Executor = ParseAgentRole(ReadNullableString(reader, 22), AgentRole.Codex),
+            Phase4Executor = ParseAgentRole(ReadNullableString(reader, 23), AgentRole.Claude),
+            ParallelismPolicy = ParseParallelismPolicy(ReadNullableString(reader, 24)),
+            MaxParallelSubagents = ReadNullableInt(reader, 25) ?? 4,
+            AutomationTemplateKey = ReadNullableString(reader, 26) ?? "feature",
             IsBuiltIn = IsBuiltInProfile(name),
             DefaultUseWorktree = !string.Equals(worktreeStrategy, "none", StringComparison.OrdinalIgnoreCase),
             WorktreeStrategy = worktreeStrategy,
             DefaultWorktreeStrategy = worktreeStrategy,
-            CreatedAt = ParseDbDateTime(reader.GetString(21)),
-            UpdatedAt = ParseDbDateTime(reader.GetString(22)),
+            CreatedAt = ParseDbDateTime(reader.GetString(28)),
+            UpdatedAt = ParseDbDateTime(reader.GetString(29)),
         };
     }
 
@@ -1390,6 +1595,7 @@ public sealed class SessionStore : ISessionStore
             {
                 Name = "标准协作",
                 Description = "保留人工发送与手动推进，适合日常双栏协作。",
+                AutomationTemplateKey = "feature",
                 IsBuiltIn = true,
                 DefaultPanelPreset = "balanced",
             },
@@ -1400,6 +1606,7 @@ public sealed class SessionStore : ISessionStore
                 ClaudePermissionMode = "plan",
                 AutomationEnabled = true,
                 AutomationAdvancePolicy = "manual-each-stage",
+                AutomationTemplateKey = "research",
                 IsBuiltIn = true,
                 DefaultPanelPreset = "automation",
             },
@@ -1411,6 +1618,7 @@ public sealed class SessionStore : ISessionStore
                 CodexMode = "full-auto",
                 AutomationEnabled = true,
                 AutomationAdvancePolicy = "full-auto-loop",
+                AutomationTemplateKey = "feature",
                 IsBuiltIn = true,
                 DefaultPanelPreset = "automation",
             },

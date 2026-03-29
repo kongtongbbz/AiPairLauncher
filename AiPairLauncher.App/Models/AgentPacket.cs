@@ -52,7 +52,9 @@ public sealed class AgentPacket
 
     public string Body { get; init; } = string.Empty;
 
-    public string CodexBrief { get; init; } = string.Empty;
+    public string ExecutorBrief { get; init; } = string.Empty;
+
+    public string CodexBrief => ExecutorBrief;
 
     public string PacketSummary
     {

@@ -1,3 +1,4 @@
+using System.IO;
 using AiPairLauncher.App.Models;
 using AiPairLauncher.App.Services;
 using Xunit;
@@ -6,6 +7,185 @@ namespace AiPairLauncher.Tests;
 
 public sealed class AutoCollaborationCoordinatorTests
 {
+    [Fact(DisplayName = "test_phase1_executor_routes_bootstrap_prompt_to_selected_role")]
+    public async Task Phase1ExecutorRoutesBootstrapPromptToSelectedRoleAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+
+        var settings = AutomationTestHelpers.CreateSettingsWithExecutors(
+            phase1Executor: AgentRole.Codex,
+            phase2Executor: AgentRole.Claude,
+            phase3Executor: AgentRole.Codex,
+            phase4Executor: AgentRole.Claude);
+
+        await coordinator.StartAsync(session, settings);
+
+        Assert.True(fakeWezTerm.SentAutomationPrompts.Count >= 1);
+        Assert.Equal(AgentRole.Codex, fakeWezTerm.SentAutomationPrompts[0].Role);
+
+        await coordinator.StopAsync();
+    }
+
+    [Fact(DisplayName = "test_phase2_prompt_routes_to_phase2_executor")]
+    public async Task Phase2PromptRoutesToPhase2ExecutorAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var taskMdPath = TaskMdPathResolver.BuildDefault(session.WorkingDirectory);
+
+        var settings = AutomationTestHelpers.CreateSettingsWithExecutors(
+            phase1Executor: AgentRole.Claude,
+            phase2Executor: AgentRole.Codex,
+            phase3Executor: AgentRole.Codex,
+            phase4Executor: AgentRole.Claude);
+
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase1Research,
+                stageId: 1,
+                taskMdPath: taskMdPath,
+                taskMdStatus: TaskMdStatus.PendingPlan,
+                role: AgentRole.Claude));
+        await coordinator.StartAsync(session, settings);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        await coordinator.ApproveAsync("进入 Phase 2");
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => fakeWezTerm.SentAutomationPrompts.Count >= 2));
+        Assert.Equal(AgentRole.Codex, fakeWezTerm.SentAutomationPrompts.Last().Role);
+
+        await coordinator.StopAsync();
+    }
+
+    [Fact(DisplayName = "test_phase3_prompt_routes_to_phase3_executor_after_phase2_approval")]
+    public async Task Phase3PromptRoutesToPhase3ExecutorAfterPhase2ApprovalAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var taskMdPath = TaskMdPathResolver.BuildDefault(session.WorkingDirectory);
+
+        var settings = AutomationTestHelpers.CreateSettingsWithExecutors(
+            phase1Executor: AgentRole.Claude,
+            phase2Executor: AgentRole.Codex,
+            phase3Executor: AgentRole.Claude,
+            phase4Executor: AgentRole.Claude);
+
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase1Research,
+                stageId: 1,
+                taskMdPath: taskMdPath,
+                taskMdStatus: TaskMdStatus.PendingPlan,
+                role: AgentRole.Claude));
+        await coordinator.StartAsync(session, settings);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        await coordinator.ApproveAsync("进入 Phase 2");
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => fakeWezTerm.SentAutomationPrompts.Count >= 2));
+        fakeWezTerm.SetPaneText(
+            session.RightPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase2Planning,
+                stageId: 1,
+                taskMdPath: taskMdPath,
+                taskMdStatus: TaskMdStatus.Planned,
+                role: AgentRole.Codex));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        await coordinator.ApproveAsync("进入 Phase 3");
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => fakeWezTerm.SentAutomationPrompts.Count >= 3));
+        Assert.Equal(AgentRole.Claude, fakeWezTerm.SentAutomationPrompts.Last().Role);
+
+        await coordinator.StopAsync();
+    }
+
+    [Fact(DisplayName = "test_phase4_prompt_routes_to_phase4_executor_on_complete")]
+    public async Task Phase4PromptRoutesToPhase4ExecutorOnCompleteAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+        var session = AutomationTestHelpers.CreateSession();
+        var taskMdPath = TaskMdPathResolver.BuildDefault(session.WorkingDirectory);
+
+        var settings = AutomationTestHelpers.CreateSettingsWithExecutors(
+            phase1Executor: AgentRole.Claude,
+            phase2Executor: AgentRole.Claude,
+            phase3Executor: AgentRole.Codex,
+            phase4Executor: AgentRole.Codex);
+
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase1Research,
+                stageId: 1,
+                taskMdPath: taskMdPath,
+                taskMdStatus: TaskMdStatus.PendingPlan,
+                role: AgentRole.Claude));
+        await coordinator.StartAsync(session, settings);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        await coordinator.ApproveAsync("进入 Phase 2");
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => fakeWezTerm.SentAutomationPrompts.Count >= 2));
+        fakeWezTerm.SetPaneText(
+            session.LeftPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase2Planning,
+                stageId: 1,
+                taskMdPath: taskMdPath,
+                taskMdStatus: TaskMdStatus.Planned));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        await coordinator.ApproveAsync("进入 Phase 3");
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudePlan));
+
+        fakeWezTerm.SetPaneText(
+            session.RightPaneId,
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase3Execution,
+                stageId: 1,
+                taskMdPath: taskMdPath,
+                taskMdStatus: TaskMdStatus.InProgress,
+                role: AgentRole.Codex));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForCodexReport));
+
+        fakeWezTerm.SetPaneText(
+            session.RightPaneId,
+            AutomationTestHelpers.BuildPhaseExecutionReportPacket(1, taskMdPath, TaskMdStatus.InProgress, role: AgentRole.Codex));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudeReview));
+
+        fakeWezTerm.SetPaneText(
+            session.RightPaneId,
+            AutomationTestHelpers.BuildPhaseReviewDecisionPacket(
+                AutomationPhase.Phase3Execution,
+                stageId: 1,
+                decision: "complete",
+                taskMdPath: taskMdPath,
+                taskMdStatus: TaskMdStatus.InProgress,
+                role: AgentRole.Codex));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => fakeWezTerm.SentAutomationPrompts.Count >= 4));
+        Assert.Equal(AgentRole.Codex, fakeWezTerm.SentAutomationPrompts.Last().Role);
+
+        await coordinator.StopAsync();
+    }
     [Fact(DisplayName = "test_deduplicate_same_packet")]
     public async Task DeduplicateSamePacketAsync()
     {
@@ -602,8 +782,8 @@ Quick safety check:
         Assert.Contains("phase2_planning", fakeWezTerm.SentAutomationPrompts.Last().Prompt);
     }
 
-    [Fact(DisplayName = "test_phase2_approval_routes_back_to_claude_for_phase3")]
-    public async Task Phase2ApprovalRoutesBackToClaudeForPhase3Async()
+    [Fact(DisplayName = "test_phase2_approval_routes_to_phase3_executor")]
+    public async Task Phase2ApprovalRoutesToPhase3ExecutorAsync()
     {
         var fakeWezTerm = new FakeWezTermService();
         var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
@@ -657,7 +837,7 @@ Quick safety check:
         Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
             coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudePlan &&
             coordinator.GetCurrentState().Phase == AutomationPhase.Phase3Execution));
-        Assert.Equal(AgentRole.Claude, fakeWezTerm.SentAutomationPrompts.Last().Role);
+        Assert.Equal(AgentRole.Codex, fakeWezTerm.SentAutomationPrompts.Last().Role);
         Assert.Contains("phase3_execution", fakeWezTerm.SentAutomationPrompts.Last().Prompt);
     }
 
@@ -901,6 +1081,49 @@ Quick safety check:
             advancePolicy: AutomationAdvancePolicy.FullAutoLoop,
             maxAutoStages: maxAutoStages,
             maxRetryPerStage: maxRetryPerStage);
+    }
+
+    private static int ResolvePaneId(LauncherSession session, AgentRole role)
+    {
+        return role == AgentRole.Codex ? session.RightPaneId : session.LeftPaneId;
+    }
+
+    private static async Task<string> AdvanceToExecutionReadyAsync(
+        FakeWezTermService fakeWezTerm,
+        AutoCollaborationCoordinator coordinator,
+        LauncherSession session,
+        AutomationSettings settings)
+    {
+        fakeWezTerm.SetPaneText(
+            ResolvePaneId(session, settings.Phase1Executor),
+            AutomationTestHelpers.BuildStagePlanPacket(1, role: settings.Phase1Executor));
+
+        await coordinator.StartAsync(session, settings);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        await coordinator.ApproveAsync(null);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => fakeWezTerm.SentAutomationPrompts.Count >= 2));
+
+        var taskMdPath = TaskMdPathResolver.BuildDefault(session.WorkingDirectory);
+        fakeWezTerm.SetPaneText(
+            ResolvePaneId(session, settings.Phase2Executor),
+            AutomationTestHelpers.BuildPhaseStagePlanPacket(
+                AutomationPhase.Phase2Planning,
+                1,
+                taskMdPath,
+                TaskMdStatus.Planned,
+                role: settings.Phase2Executor));
+
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval));
+
+        await coordinator.ApproveAsync(null);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() =>
+            coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForCodexReport &&
+            coordinator.GetCurrentState().CurrentStageId == 1));
+
+        return taskMdPath;
     }
 
     private static string RepeatPacket(string packet)

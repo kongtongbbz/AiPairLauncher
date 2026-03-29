@@ -329,6 +329,58 @@
                                           DisplayMemberPath="Label"
                                           ItemsSource="{Binding Core.PanelPresetOptions}"
                                           SelectedValue="{Binding Core.PanelPreset, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Margin="0,12,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="编排模板" />
+                                <ComboBox Margin="0,6,0,0"
+                                          SelectedValuePath="Value"
+                                          DisplayMemberPath="Label"
+                                          ItemsSource="{Binding Core.AutomationTemplateOptions}"
+                                          SelectedValue="{Binding Core.SelectedAutomationTemplateKey, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Margin="0,14,0,0"
+                                           FontWeight="SemiBold"
+                                           Text="Phase 执行器" />
+
+                                <UniformGrid Margin="0,10,0,0" Columns="2">
+                                    <StackPanel Margin="0,0,10,10">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="Phase 1" />
+                                        <ComboBox Margin="0,6,0,0"
+                                                  SelectedValuePath="Value"
+                                                  DisplayMemberPath="Label"
+                                                  ItemsSource="{Binding Core.PhaseExecutorOptions}"
+                                                  SelectedValue="{Binding Core.SelectedPhase1ExecutorKey, UpdateSourceTrigger=PropertyChanged}"
+                                                  IsEnabled="{Binding Core.CanEditPhaseExecutors}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="Phase 2" />
+                                        <ComboBox Margin="0,6,0,0"
+                                                  SelectedValuePath="Value"
+                                                  DisplayMemberPath="Label"
+                                                  ItemsSource="{Binding Core.PhaseExecutorOptions}"
+                                                  SelectedValue="{Binding Core.SelectedPhase2ExecutorKey, UpdateSourceTrigger=PropertyChanged}"
+                                                  IsEnabled="{Binding Core.CanEditPhaseExecutors}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,10,0">
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="Phase 3" />
+                                        <ComboBox Margin="0,6,0,0"
+                                                  SelectedValuePath="Value"
+                                                  DisplayMemberPath="Label"
+                                                  ItemsSource="{Binding Core.PhaseExecutorOptions}"
+                                                  SelectedValue="{Binding Core.SelectedPhase3ExecutorKey, UpdateSourceTrigger=PropertyChanged}"
+                                                  IsEnabled="{Binding Core.CanEditPhaseExecutors}" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="Phase 4" />
+                                        <ComboBox Margin="0,6,0,0"
+                                                  SelectedValuePath="Value"
+                                                  DisplayMemberPath="Label"
+                                                  ItemsSource="{Binding Core.PhaseExecutorOptions}"
+                                                  SelectedValue="{Binding Core.SelectedPhase4ExecutorKey, UpdateSourceTrigger=PropertyChanged}"
+                                                  IsEnabled="{Binding Core.CanEditPhaseExecutors}" />
+                                    </StackPanel>
+                                </UniformGrid>
                             </StackPanel>
                         </Expander>
 

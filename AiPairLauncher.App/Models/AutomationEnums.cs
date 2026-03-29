@@ -50,6 +50,14 @@ public enum AutomationStageStatus
     Stopped,
 }
 
+public enum AutomationParallelismPolicy
+{
+    Conservative,
+    Balanced,
+    Aggressive,
+    Auto,
+}
+
 public enum PacketParseStatus
 {
     NoPacket,

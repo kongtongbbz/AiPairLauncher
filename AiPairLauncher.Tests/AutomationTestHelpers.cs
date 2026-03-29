@@ -177,6 +177,7 @@ internal static class AutomationTestHelpers
     {
         var workingDirectory = Path.Combine(Path.GetTempPath(), "AiPairLauncher.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workingDirectory);
+        WriteDefaultTaskMd(workingDirectory, TaskMdStatus.PendingPlan);
         return new LauncherSession
         {
             Workspace = "test-workspace",
@@ -200,6 +201,7 @@ internal static class AutomationTestHelpers
     {
         var workingDirectory = Path.Combine(Path.GetTempPath(), "AiPairLauncher.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workingDirectory);
+        WriteDefaultTaskMd(workingDirectory, TaskMdStatus.PendingPlan);
         return new LauncherSession
         {
             Workspace = "manual-workspace",
@@ -236,6 +238,36 @@ internal static class AutomationTestHelpers
         };
     }
 
+    public static AutomationSettings CreateSettingsWithExecutors(
+        AgentRole phase1Executor,
+        AgentRole phase2Executor,
+        AgentRole phase3Executor,
+        AgentRole phase4Executor,
+        string? parallelismPolicy = null,
+        int? maxParallelSubagents = null,
+        int timeoutSeconds = 2,
+        AutomationAdvancePolicy advancePolicy = AutomationAdvancePolicy.FullAutoLoop,
+        int maxAutoStages = 8,
+        int maxRetryPerStage = 2)
+    {
+        var settings = CreateSettings(timeoutSeconds, advancePolicy, maxAutoStages, maxRetryPerStage);
+        TestReflection.SetProperty(settings, "Phase1Executor", phase1Executor);
+        TestReflection.SetProperty(settings, "Phase2Executor", phase2Executor);
+        TestReflection.SetProperty(settings, "Phase3Executor", phase3Executor);
+        TestReflection.SetProperty(settings, "Phase4Executor", phase4Executor);
+        if (!string.IsNullOrWhiteSpace(parallelismPolicy))
+        {
+            TestReflection.SetProperty(settings, "ParallelismPolicy", parallelismPolicy);
+        }
+
+        if (maxParallelSubagents.HasValue)
+        {
+            TestReflection.SetProperty(settings, "MaxParallelSubagents", maxParallelSubagents.Value);
+        }
+
+        return settings;
+    }
+
     public static async Task<bool> WaitForConditionAsync(Func<bool> condition, int timeoutMilliseconds = 5000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
@@ -252,11 +284,18 @@ internal static class AutomationTestHelpers
         return condition();
     }
 
-    public static string BuildStagePlanPacket(int stageId, string title = "阶段计划", string codexBrief = "执行任务")
+    public static string BuildStagePlanPacket(
+        int stageId,
+        string title = "阶段计划",
+        string codexBrief = "执行任务",
+        AgentRole role = AgentRole.Claude,
+        string briefKey = "codex_brief")
     {
+        var roleValue = role == AgentRole.Codex ? "codex" : "claude";
+        var normalizedBriefKey = string.IsNullOrWhiteSpace(briefKey) ? "codex_brief" : briefKey;
         return $"""
 [AIPAIR_PACKET]
-role: claude
+role: {roleValue}
 kind: stage_plan
 stage_id: {stageId}
 title: {title}
@@ -274,18 +313,22 @@ acceptance: <<<ACCEPTANCE
 1. 构建通过
 2. 输出正确
 ACCEPTANCE
-codex_brief: <<<CODEX
+{normalizedBriefKey}: <<<CODEX
 {codexBrief}
 CODEX
 [/AIPAIR_PACKET]
 """;
     }
 
-    public static string BuildExecutionReportPacket(int stageId, string summary = "已执行")
+    public static string BuildExecutionReportPacket(
+        int stageId,
+        string summary = "已执行",
+        AgentRole role = AgentRole.Codex)
     {
+        var roleValue = role == AgentRole.Claude ? "claude" : "codex";
         return $"""
 [AIPAIR_PACKET]
-role: codex
+role: {roleValue}
 kind: execution_report
 stage_id: {stageId}
 status: success
@@ -311,11 +354,19 @@ BODY
 """;
     }
 
-    public static string BuildReviewDecisionPacket(int stageId, string decision, string codexBrief = "继续执行")
+    public static string BuildReviewDecisionPacket(
+        int stageId,
+        string decision,
+        string codexBrief = "继续执行",
+        AgentRole? role = null,
+        string briefKey = "codex_brief")
     {
+        var resolvedRole = role ?? AgentRole.Claude;
+        var roleValue = resolvedRole == AgentRole.Codex ? "codex" : "claude";
+        var normalizedBriefKey = string.IsNullOrWhiteSpace(briefKey) ? "codex_brief" : briefKey;
         return $"""
 [AIPAIR_PACKET]
-role: claude
+role: {roleValue}
 kind: review_decision
 stage_id: {stageId}
 decision: {decision}
@@ -329,7 +380,7 @@ STEPS
 acceptance: <<<ACCEPTANCE
 1. 下一阶段验收
 ACCEPTANCE
-codex_brief: <<<CODEX
+{normalizedBriefKey}: <<<CODEX
 {codexBrief}
 CODEX
 body: <<<BODY
@@ -345,11 +396,17 @@ BODY
         string taskMdPath,
         TaskMdStatus taskMdStatus,
         string title = "阶段计划",
-        string codexBrief = "执行任务")
+        string codexBrief = "执行任务",
+        AgentRole? role = null,
+        string briefKey = "codex_brief")
     {
+        var resolvedRole = role ?? (phase == AutomationPhase.Phase3Execution ? AgentRole.Codex : AgentRole.Claude);
+        WriteTaskMdFile(taskMdPath, taskMdStatus);
+        var roleValue = resolvedRole == AgentRole.Codex ? "codex" : "claude";
+        var normalizedBriefKey = string.IsNullOrWhiteSpace(briefKey) ? "codex_brief" : briefKey;
         return $"""
 [AIPAIR_PACKET]
-role: claude
+role: {roleValue}
 kind: stage_plan
 phase: {ToPhaseValue(phase)}
 subagent: planner
@@ -371,7 +428,7 @@ acceptance: <<<ACCEPTANCE
 1. 构建通过
 2. 输出正确
 ACCEPTANCE
-codex_brief: <<<CODEX_BRIEF
+{normalizedBriefKey}: <<<CODEX_BRIEF
 {codexBrief}
 CODEX_BRIEF
 [/AIPAIR_PACKET]
@@ -383,12 +440,15 @@ CODEX_BRIEF
         string taskMdPath,
         TaskMdStatus taskMdStatus,
         string summary = "已执行",
-        string? taskRef = null)
+        string? taskRef = null,
+        AgentRole role = AgentRole.Codex)
     {
+        WriteTaskMdFile(taskMdPath, taskMdStatus);
+        var roleValue = role == AgentRole.Claude ? "claude" : "codex";
         var taskRefLine = string.IsNullOrWhiteSpace(taskRef) ? string.Empty : $"task_ref: {taskRef}{Environment.NewLine}";
         return $"""
 [AIPAIR_PACKET]
-role: codex
+role: {roleValue}
 kind: execution_report
 phase: phase3_execution
 stage_id: {stageId}
@@ -424,8 +484,14 @@ BODY
         string taskMdPath,
         TaskMdStatus taskMdStatus,
         string codexBrief = "继续执行",
-        string? taskRef = null)
+        string? taskRef = null,
+        AgentRole? role = null,
+        string briefKey = "codex_brief")
     {
+        var resolvedRole = role ?? (phase == AutomationPhase.Phase4Review ? AgentRole.Claude : AgentRole.Codex);
+        WriteTaskMdFile(taskMdPath, taskMdStatus);
+        var roleValue = resolvedRole == AgentRole.Codex ? "codex" : "claude";
+        var normalizedBriefKey = string.IsNullOrWhiteSpace(briefKey) ? "codex_brief" : briefKey;
         var taskRefLine = string.IsNullOrWhiteSpace(taskRef) ? string.Empty : $"task_ref: {taskRef}{Environment.NewLine}";
         var codexSection = decision is "next_stage" or "retry_stage"
             ? $"""
@@ -439,7 +505,7 @@ STEPS
 acceptance: <<<ACCEPTANCE
 1. 下一阶段验收
 ACCEPTANCE
-codex_brief: <<<CODEX
+{normalizedBriefKey}: <<<CODEX
 {codexBrief}
 CODEX
 """
@@ -447,7 +513,7 @@ CODEX
 
         return $"""
 [AIPAIR_PACKET]
-role: claude
+role: {roleValue}
 kind: review_decision
 phase: {ToPhaseValue(phase)}
 stage_id: {stageId}
@@ -463,7 +529,13 @@ BODY
 
     public static string WriteTaskMd(LauncherSession session, TaskMdStatus status, string body)
     {
-        var taskMdPath = Path.Combine(session.WorkingDirectory, "task.md");
+        var taskMdPath = TaskMdPathResolver.BuildDefault(session.WorkingDirectory);
+        var taskMdDirectory = Path.GetDirectoryName(taskMdPath);
+        if (!string.IsNullOrWhiteSpace(taskMdDirectory))
+        {
+            Directory.CreateDirectory(taskMdDirectory);
+        }
+
         File.WriteAllText(
             taskMdPath,
             $$"""
@@ -478,6 +550,49 @@ BODY
 {{body}}
 """);
         return taskMdPath;
+    }
+
+    private static void WriteDefaultTaskMd(string workingDirectory, TaskMdStatus status)
+    {
+        var session = new LauncherSession
+        {
+            Workspace = "bootstrap",
+            WorkingDirectory = workingDirectory,
+            WezTermPath = "wezterm.exe",
+            SocketPath = "sock",
+            GuiPid = 0,
+            LeftPaneId = 0,
+            RightPaneId = 0,
+            RightPanePercent = 60,
+            AutomationEnabledAtLaunch = true,
+        };
+
+        WriteTaskMd(session, status, "### 阶段 1: 启动\n\n- [ ] **T1.1**: 初始化");
+    }
+
+    private static void WriteTaskMdFile(string taskMdPath, TaskMdStatus status)
+    {
+        var directory = Path.GetDirectoryName(taskMdPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        File.WriteAllText(
+            taskMdPath,
+            $$"""
+# Task: 自动编排测试
+
+> 生成时间: 2026-03-28T10:30:00+08:00
+> 工作目录: {{directory ?? string.Empty}}
+> 状态: {{ToTaskMdStatusHeader(status)}}
+
+## 任务清单
+
+### 阶段 1: 启动
+
+- [ ] **T1.1**: 初始化
+""");
     }
 
     private static string ToPhaseValue(AutomationPhase phase)
@@ -514,5 +629,65 @@ BODY
             TaskMdStatus.Done => "DONE",
             _ => "UNKNOWN",
         };
+    }
+}
+
+internal static class TestReflection
+{
+    public static void SetProperty(object target, string propertyName, object value)
+    {
+        var property = target.GetType().GetProperty(propertyName);
+        if (property is null)
+        {
+            throw new InvalidOperationException($"缺少属性 {propertyName}，请先补齐实现。");
+        }
+
+        var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+        object? convertedValue = value;
+        if (propertyType.IsEnum)
+        {
+            if (value is string text)
+            {
+                convertedValue = Enum.Parse(propertyType, text, ignoreCase: true);
+            }
+            else if (value.GetType() != propertyType)
+            {
+                convertedValue = Enum.Parse(propertyType, value.ToString() ?? string.Empty, ignoreCase: true);
+            }
+        }
+        else if (propertyType == typeof(string))
+        {
+            convertedValue = value.ToString();
+        }
+        else if (propertyType != value.GetType() && value is IConvertible)
+        {
+            convertedValue = Convert.ChangeType(value, propertyType);
+        }
+
+        property.SetValue(target, convertedValue);
+    }
+
+    public static string GetPropertyString(object target, string propertyName)
+    {
+        var property = target.GetType().GetProperty(propertyName);
+        if (property is null)
+        {
+            throw new InvalidOperationException($"缺少属性 {propertyName}，请先补齐实现。");
+        }
+
+        var value = property.GetValue(target);
+        return value?.ToString() ?? string.Empty;
+    }
+
+    public static bool GetPropertyBool(object target, string propertyName)
+    {
+        var property = target.GetType().GetProperty(propertyName);
+        if (property is null)
+        {
+            throw new InvalidOperationException($"缺少属性 {propertyName}，请先补齐实现。");
+        }
+
+        var value = property.GetValue(target);
+        return value is bool flag && flag;
     }
 }

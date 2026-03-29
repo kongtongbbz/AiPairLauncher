@@ -1,5 +1,7 @@
 using System.IO;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -195,6 +197,7 @@ public partial class MainWindow : Window
         {
             _viewModel.ResetAutomationState();
             _viewModel.ReplaceAutomationHistory([]);
+            _viewModel.ReplaceTaskMdRevisionHistory([]);
             return;
         }
 
@@ -204,6 +207,7 @@ public partial class MainWindow : Window
 
         await RestoreAutomationSnapshotIfPossibleAsync(selectedRecord.Session).ConfigureAwait(true);
         await LoadAutomationHistoryAsync(selectedRecord.SessionId).ConfigureAwait(true);
+        await LoadTaskMdRevisionHistoryAsync(selectedRecord.SessionId).ConfigureAwait(true);
 
         if (_sessionRuntimeRegistry.TryGetAutomationCoordinator(selectedRecord.SessionId, out var coordinator) &&
             coordinator is not null)
@@ -277,6 +281,7 @@ public partial class MainWindow : Window
 
             await LoadSessionCatalogAsync(_currentSession.SessionId, writeLog: false).ConfigureAwait(true);
             await LoadAutomationHistoryAsync(_currentSession.SessionId).ConfigureAwait(true);
+            await LoadTaskMdRevisionHistoryAsync(_currentSession.SessionId).ConfigureAwait(true);
             _viewModel.AppendLog($"会话启动成功，工作区: {_currentSession.Workspace}，Claude 模式: {_viewModel.ClaudeModeDisplayText}，Codex 模式: {_viewModel.CodexModeDisplayText}。");
             _viewModel.AppendLog(worktreeContext.Summary);
             _viewModel.FooterMessage = $"最近操作: 已启动工作区 {_currentSession.Workspace}";
@@ -867,6 +872,11 @@ public partial class MainWindow : Window
         {
             IsEnabled = _viewModel.AutoModeEnabled,
             InitialTaskPrompt = _viewModel.AutomationTaskPrompt.Trim(),
+            AutomationTemplateKey = _viewModel.SelectedAutomationTemplateKey,
+            Phase1Executor = _viewModel.Phase1ExecutorRole,
+            Phase2Executor = _viewModel.Phase2ExecutorRole,
+            Phase3Executor = _viewModel.Phase3ExecutorRole,
+            Phase4Executor = _viewModel.Phase4ExecutorRole,
             AdvancePolicy = _viewModel.SelectedAutomationAdvancePolicy,
             PollIntervalMilliseconds = _viewModel.AutomationPollIntervalMilliseconds,
             CaptureLines = _viewModel.AutomationCaptureLines,
@@ -874,6 +884,8 @@ public partial class MainWindow : Window
             NoProgressTimeoutSeconds = _viewModel.AutomationTimeoutSeconds,
             MaxAutoStages = _viewModel.AutomationMaxAutoStages,
             MaxRetryPerStage = _viewModel.AutomationMaxRetryPerStage,
+            ParallelismPolicy = _viewModel.SelectedAutomationParallelismPolicy,
+            MaxParallelSubagents = _viewModel.AutomationMaxParallelSubagents,
         };
 
         var coordinator = _sessionRuntimeRegistry.GetOrCreateAutomationCoordinator(_currentSession.SessionId);
@@ -886,8 +898,9 @@ public partial class MainWindow : Window
 
         await PersistAutomationSnapshotAsync(_currentSession.SessionId, settings, coordinator.GetCurrentState()).ConfigureAwait(true);
         await LoadAutomationHistoryAsync(_currentSession.SessionId).ConfigureAwait(true);
+        await LoadTaskMdRevisionHistoryAsync(_currentSession.SessionId).ConfigureAwait(true);
 
-        _viewModel.AppendLog($"自动编排已启动，推进策略: {_viewModel.SelectedAutomationAdvancePolicyKey}。");
+        _viewModel.AppendLog($"自动编排已启动，推进策略: {_viewModel.SelectedAutomationAdvancePolicyKey}，执行器矩阵: {_viewModel.AutomationPhaseExecutorSummary}。");
         _viewModel.FooterMessage = "自动编排已启动";
         await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
     }
@@ -921,6 +934,8 @@ public partial class MainWindow : Window
         }
         await _sessionStore.SaveAutomationEventAsync(AutomationEventRecord.FromState(_currentSession.SessionId, coordinator.GetCurrentState())).ConfigureAwait(true);
         await LoadAutomationHistoryAsync(_currentSession.SessionId).ConfigureAwait(true);
+        await PersistTaskMdRevisionIfChangedAsync(_currentSession.SessionId, coordinator.GetCurrentState()).ConfigureAwait(true);
+        await LoadTaskMdRevisionHistoryAsync(_currentSession.SessionId).ConfigureAwait(true);
         _viewModel.AppendLog("已停止当前自动编排。");
         _viewModel.FooterMessage = "自动编排已停止";
         await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
@@ -1132,12 +1147,14 @@ public partial class MainWindow : Window
             {
                 await PersistAutomationSnapshotAsync(sessionId, settings, state).ConfigureAwait(true);
             }
+            await PersistTaskMdRevisionIfChangedAsync(sessionId, state).ConfigureAwait(true);
 
             if (_currentSession is not null &&
                 string.Equals(_currentSession.SessionId, sessionId, StringComparison.Ordinal))
             {
                 _viewModel.ApplyAutomationState(state);
                 await LoadAutomationHistoryAsync(sessionId).ConfigureAwait(true);
+                await LoadTaskMdRevisionHistoryAsync(sessionId).ConfigureAwait(true);
             }
 
             _viewModel.AppendLog($"自动编排[{sessionId}] 状态: {state.Status} / {state.StatusDetail}");
@@ -1169,6 +1186,18 @@ public partial class MainWindow : Window
 
         var events = await _sessionStore.ListAutomationEventsAsync(sessionId, 24).ConfigureAwait(true);
         _viewModel.ReplaceAutomationHistory(events);
+    }
+
+    private async Task LoadTaskMdRevisionHistoryAsync(string? sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            _viewModel.ReplaceTaskMdRevisionHistory([]);
+            return;
+        }
+
+        var revisions = await _sessionStore.ListTaskMdRevisionsAsync(sessionId, 24).ConfigureAwait(true);
+        _viewModel.ReplaceTaskMdRevisionHistory(revisions);
     }
 
     private async Task PersistAutomationSnapshotAsync(string sessionId, AutomationSettings settings, AutomationRunState state)
@@ -1218,7 +1247,46 @@ public partial class MainWindow : Window
         if (_currentSession is not null && string.Equals(_currentSession.SessionId, session.SessionId, StringComparison.Ordinal))
         {
             _viewModel.ApplyAutomationState(coordinator.GetCurrentState());
+            await LoadTaskMdRevisionHistoryAsync(session.SessionId).ConfigureAwait(true);
         }
+    }
+
+    private async Task PersistTaskMdRevisionIfChangedAsync(string sessionId, AutomationRunState state)
+    {
+        if (string.IsNullOrWhiteSpace(state.TaskMdPath) || !File.Exists(state.TaskMdPath))
+        {
+            return;
+        }
+
+        var content = await File.ReadAllTextAsync(state.TaskMdPath).ConfigureAwait(true);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return;
+        }
+
+        var contentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
+        var existing = await _sessionStore.ListTaskMdRevisionsAsync(sessionId, 1).ConfigureAwait(true);
+        if (existing.FirstOrDefault()?.ContentHash == contentHash)
+        {
+            return;
+        }
+
+        var summary = $"{state.Phase} / {state.TaskMdStatus} / {(string.IsNullOrWhiteSpace(state.CurrentTaskRef) ? "暂无任务" : state.CurrentTaskRef)}";
+        await _sessionStore.SaveTaskMdRevisionAsync(new TaskMdRevisionRecord
+        {
+            SessionId = sessionId,
+            TaskMdPath = state.TaskMdPath,
+            TaskMdStatus = state.TaskMdStatus,
+            Phase = state.Phase,
+            StageId = state.CurrentStageId,
+            TaskRef = state.CurrentTaskRef,
+            ActiveExecutor = state.ActiveExecutor,
+            ParallelismPolicy = state.ParallelismPolicy,
+            MaxParallelSubagents = state.MaxParallelSubagents,
+            ContentHash = contentHash,
+            Summary = summary,
+            OccurredAt = state.UpdatedAt,
+        }).ConfigureAwait(true);
     }
 
     private static string? ResolveSessionId(object sender)

@@ -30,6 +30,28 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         new() { Value = "full-auto-loop", Label = "全自动闭环" },
     ];
 
+    private static readonly IReadOnlyList<ModeOption> AutomationExecutorModes =
+    [
+        new() { Value = "claude", Label = "Claude" },
+        new() { Value = "codex", Label = "CODEX" },
+    ];
+
+    private static readonly IReadOnlyList<ModeOption> AutomationParallelismModes =
+    [
+        new() { Value = "auto", Label = "自动" },
+        new() { Value = "balanced", Label = "均衡" },
+        new() { Value = "conservative", Label = "保守" },
+        new() { Value = "aggressive", Label = "激进" },
+    ];
+
+    private static readonly IReadOnlyList<ModeOption> AutomationTemplateModes =
+    [
+        new() { Value = "feature", Label = "功能开发" },
+        new() { Value = "bugfix", Label = "缺陷修复" },
+        new() { Value = "refactor", Label = "重构与验证" },
+        new() { Value = "research", Label = "只读调研" },
+    ];
+
     private static readonly IReadOnlyList<ModeOption> WorktreeStrategies =
     [
         new() { Value = "none", Label = "禁用" },
@@ -90,8 +112,18 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string _automationTaskMdStatus = "暂无";
     private string _automationTaskProgressSummary = "暂无";
     private string _automationCurrentTaskRef = "暂无";
-    private string _automationTaskPrompt = "请围绕当前工作目录中的项目需求推进开发，先拆成可审批的阶段计划，再驱动 Codex 执行与验证，直到完成。";
+    private string _automationTaskPrompt = "请围绕当前工作目录中的项目需求推进开发，先拆成可审批的阶段计划，再驱动执行器执行与验证，直到完成。";
     private string _automationAdvancePolicy = "full-auto-loop";
+    private string _automationPhase1Executor = "claude";
+    private string _automationPhase2Executor = "claude";
+    private string _automationPhase3Executor = "codex";
+    private string _automationPhase4Executor = "claude";
+    private string _automationParallelismPolicy = "auto";
+    private int _automationMaxParallelSubagents = 4;
+    private string _automationTemplateKey = "feature";
+    private string _automationActiveExecutorLabel = "暂无";
+    private string _automationParallelGroupSummary = "暂无";
+    private string _automationHistoryReplayHint = "暂无";
     private string _automationAutoAdvanceStatusText = "未启用";
     private string _automationInterventionReason = "暂无";
     private string _approvalNote = string.Empty;
@@ -102,6 +134,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string _pendingApprovalSteps = "暂无";
     private string _pendingApprovalAcceptance = "暂无";
     private string _pendingApprovalCodexBrief = "暂无";
+    private string _pendingApprovalExecutorLabel = "暂无";
     private string _sessionSearchText = string.Empty;
     private string _selectedSessionStatusFilter = "all";
     private string _selectedSessionGroupFilter = "__all__";
@@ -184,6 +217,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public ObservableCollection<ManagedSessionRecord> PendingSessionRecords { get; } = [];
 
     public ObservableCollection<AutomationEventRecord> AutomationHistory { get; } = [];
+
+    public ObservableCollection<TaskMdRevisionRecord> AutomationTaskMdRevisions { get; } = [];
 
     public string AppVersionText => $"版本 {AppVersionValue}";
 
@@ -465,6 +500,102 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         set => SetField(ref _automationAdvancePolicy, NormalizeAutomationAdvancePolicy(value));
     }
 
+    public string SelectedPhase1ExecutorKey
+    {
+        get => _automationPhase1Executor;
+        set
+        {
+            var normalized = NormalizeExecutorKey(value);
+            if (!SetField(ref _automationPhase1Executor, normalized))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(AutomationPhaseExecutorSummary));
+        }
+    }
+
+    public string SelectedPhase2ExecutorKey
+    {
+        get => _automationPhase2Executor;
+        set
+        {
+            var normalized = NormalizeExecutorKey(value);
+            if (!SetField(ref _automationPhase2Executor, normalized))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(AutomationPhaseExecutorSummary));
+        }
+    }
+
+    public string SelectedPhase3ExecutorKey
+    {
+        get => _automationPhase3Executor;
+        set
+        {
+            var normalized = NormalizeExecutorKey(value);
+            if (!SetField(ref _automationPhase3Executor, normalized))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(AutomationPhaseExecutorSummary));
+        }
+    }
+
+    public string SelectedPhase4ExecutorKey
+    {
+        get => _automationPhase4Executor;
+        set
+        {
+            var normalized = NormalizeExecutorKey(value);
+            if (!SetField(ref _automationPhase4Executor, normalized))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(AutomationPhaseExecutorSummary));
+        }
+    }
+
+    public string SelectedAutomationParallelismPolicyKey
+    {
+        get => _automationParallelismPolicy;
+        set
+        {
+            var normalized = NormalizeAutomationParallelismPolicy(value);
+            if (!SetField(ref _automationParallelismPolicy, normalized))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(AutomationParallelismPolicyLabel));
+        }
+    }
+
+    public int AutomationMaxParallelSubagents
+    {
+        get => _automationMaxParallelSubagents;
+        set => SetField(ref _automationMaxParallelSubagents, Math.Max(1, value));
+    }
+
+    public string SelectedAutomationTemplateKey
+    {
+        get => _automationTemplateKey;
+        set
+        {
+            var normalized = NormalizeAutomationTemplateKey(value);
+            if (!SetField(ref _automationTemplateKey, normalized))
+            {
+                return;
+            }
+
+            AutomationTaskPrompt = BuildAutomationTemplatePrompt(normalized);
+        }
+    }
+
     public int AutomationMaxAutoStages
     {
         get => _automationMaxAutoStages;
@@ -715,6 +846,26 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         private set => SetField(ref _automationStatusDetail, value);
     }
 
+    public string AutomationActiveExecutorLabel
+    {
+        get => _automationActiveExecutorLabel;
+        private set => SetField(ref _automationActiveExecutorLabel, value);
+    }
+
+    public string AutomationParallelismPolicyLabel => ResolveParallelismLabel(_automationParallelismPolicy);
+
+    public string AutomationParallelGroupSummary
+    {
+        get => _automationParallelGroupSummary;
+        private set => SetField(ref _automationParallelGroupSummary, value);
+    }
+
+    public string AutomationHistoryReplayHint
+    {
+        get => _automationHistoryReplayHint;
+        private set => SetField(ref _automationHistoryReplayHint, value);
+    }
+
     public string AutomationLastPacketSummary
     {
         get => _automationLastPacketSummary;
@@ -835,6 +986,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         set => SetField(ref _pendingApprovalCodexBrief, value);
     }
 
+    public string PendingApprovalExecutorLabel
+    {
+        get => _pendingApprovalExecutorLabel;
+        private set => SetField(ref _pendingApprovalExecutorLabel, value);
+    }
+
     public bool IsBusy
     {
         get => _isBusy;
@@ -857,6 +1014,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanRestoreSelectedSession));
             OnPropertyChanged(nameof(CanTogglePinSelectedSession));
             OnPropertyChanged(nameof(CanCopySelectedSessionConfig));
+            OnPropertyChanged(nameof(CanEditPhaseExecutors));
         }
     }
 
@@ -902,6 +1060,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
             OnPropertyChanged(nameof(CanStartAutomation));
             OnPropertyChanged(nameof(CanStopAutomation));
+            OnPropertyChanged(nameof(CanEditPhaseExecutors));
         }
     }
 
@@ -943,6 +1102,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool CanCopySelectedSessionConfig => !IsBusy && HasSelectedSession;
 
+    public bool CanEditPhaseExecutors => !IsBusy && !IsAutomationActive;
+
     public bool HasPendingSessions => PendingSessionRecords.Count > 0;
 
     public IReadOnlyList<ModeOption> ClaudeModeOptions => ClaudeModes;
@@ -950,6 +1111,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public IReadOnlyList<ModeOption> CodexModeOptions => CodexModes;
 
     public IReadOnlyList<ModeOption> AutomationAdvancePolicyOptions => AutomationAdvanceModes;
+
+    public IReadOnlyList<ModeOption> PhaseExecutorOptions => AutomationExecutorModes;
+
+    public IReadOnlyList<ModeOption> AutomationParallelismPolicyOptions => AutomationParallelismModes;
+
+    public IReadOnlyList<ModeOption> AutomationTemplateOptions => AutomationTemplateModes;
 
     public IReadOnlyList<ModeOption> WorktreeStrategyOptions => WorktreeStrategies;
 
@@ -960,6 +1127,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public IReadOnlyList<ModeOption> PanelPresetOptions => PanelPresetModes;
 
     public AutomationAdvancePolicy SelectedAutomationAdvancePolicy => ParseAutomationAdvancePolicy(_automationAdvancePolicy);
+
+    public AgentRole Phase1ExecutorRole => ParseExecutorRole(_automationPhase1Executor);
+
+    public AgentRole Phase2ExecutorRole => ParseExecutorRole(_automationPhase2Executor);
+
+    public AgentRole Phase3ExecutorRole => ParseExecutorRole(_automationPhase3Executor);
+
+    public AgentRole Phase4ExecutorRole => ParseExecutorRole(_automationPhase4Executor);
+
+    public AutomationParallelismPolicy SelectedAutomationParallelismPolicy => ParseAutomationParallelismPolicy(_automationParallelismPolicy);
 
     public string ClaudeModeDisplayText => ClaudePermissionMode switch
     {
@@ -975,8 +1152,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     };
 
     public string ModeLockHint => AutoModeEnabled
-        ? "自动模式已锁定为 Claude=Plan Mode / Codex=Full Auto，推进策略与保护阈值在右侧配置"
+        ? "自动模式已锁定 Claude/Codex 免确认参数，Phase 执行器在自动编排配置区独立设置"
         : "关闭自动模式后可自由选择 Claude / Codex 启动参数";
+
+    public string AutomationPhaseExecutorSummary =>
+        $"P1={ResolveExecutorLabel(_automationPhase1Executor)} / P2={ResolveExecutorLabel(_automationPhase2Executor)} / P3={ResolveExecutorLabel(_automationPhase3Executor)} / P4={ResolveExecutorLabel(_automationPhase4Executor)}";
 
     public void ReplaceDependencies(IEnumerable<DependencyStatus> dependencies)
     {
@@ -1030,6 +1210,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         {
             AutomationHistory.Add(item);
         }
+
+        AutomationHistoryReplayHint = AutomationHistory.Count == 0
+            ? "暂无回放数据"
+            : "在阶段历史中查看回放";
+    }
+
+    public void ReplaceTaskMdRevisionHistory(IEnumerable<TaskMdRevisionRecord> revisions)
+    {
+        AutomationTaskMdRevisions.Clear();
+        foreach (var item in revisions.OrderByDescending(static entry => entry.OccurredAt))
+        {
+            AutomationTaskMdRevisions.Add(item);
+        }
+
+        AutomationHistoryReplayHint = AutomationTaskMdRevisions.Count == 0
+            ? (AutomationHistory.Count == 0 ? "暂无回放数据" : "在阶段历史中查看回放")
+            : $"已记录 {AutomationTaskMdRevisions.Count} 次 task.md 变更";
     }
 
     public ManagedSessionRecord? SelectSessionById(string sessionId)
@@ -1115,6 +1312,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         AutomationMaxAutoStages = profile.AutomationMaxAutoStages;
         AutomationMaxRetryPerStage = profile.AutomationMaxRetryPerStage;
         AutomationSubmitOnSend = profile.AutomationSubmitOnSend;
+        SelectedPhase1ExecutorKey = ResolveExecutorKey(profile.Phase1Executor);
+        SelectedPhase2ExecutorKey = ResolveExecutorKey(profile.Phase2Executor);
+        SelectedPhase3ExecutorKey = ResolveExecutorKey(profile.Phase3Executor);
+        SelectedPhase4ExecutorKey = ResolveExecutorKey(profile.Phase4Executor);
+        SelectedAutomationParallelismPolicyKey = ResolveParallelismKey(profile.ParallelismPolicy);
+        AutomationMaxParallelSubagents = profile.MaxParallelSubagents;
+        SelectedAutomationTemplateKey = profile.AutomationTemplateKey;
         UseWorktree = profile.DefaultUseWorktree;
         WorktreeStrategy = string.IsNullOrWhiteSpace(profile.DefaultWorktreeStrategy)
             ? profile.WorktreeStrategy
@@ -1146,6 +1350,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             AutomationMaxAutoStages = AutomationMaxAutoStages,
             AutomationMaxRetryPerStage = AutomationMaxRetryPerStage,
             AutomationSubmitOnSend = AutomationSubmitOnSend,
+            Phase1Executor = Phase1ExecutorRole,
+            Phase2Executor = Phase2ExecutorRole,
+            Phase3Executor = Phase3ExecutorRole,
+            Phase4Executor = Phase4ExecutorRole,
+            ParallelismPolicy = SelectedAutomationParallelismPolicy,
+            MaxParallelSubagents = AutomationMaxParallelSubagents,
+            AutomationTemplateKey = SelectedAutomationTemplateKey,
             DefaultUseWorktree = UseWorktree,
             WorktreeStrategy = WorktreeStrategy,
             DefaultWorktreeStrategy = WorktreeStrategy,
@@ -1190,6 +1401,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         AutomationCurrentStageRetryCount = state.CurrentStageRetryCount;
         AutomationInterventionReason = DisplayOrPlaceholder(state.InterventionReason);
         IsAutomationActive = state.IsActive;
+        AutomationActiveExecutorLabel = state.ActiveExecutor.HasValue
+            ? ResolveExecutorLabel(ResolveExecutorKey(state.ActiveExecutor.Value))
+            : ResolvePhaseExecutorLabel(state.Phase);
+        AutomationParallelGroupSummary = DisplayOrPlaceholder(state.PendingApproval?.ParallelGroup);
 
         if (state.PendingApproval is null)
         {
@@ -1204,7 +1419,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         PendingApprovalScope = DisplayOrPlaceholder(state.PendingApproval.Scope);
         PendingApprovalSteps = JoinLines(state.PendingApproval.Steps);
         PendingApprovalAcceptance = JoinLines(state.PendingApproval.AcceptanceCriteria);
-        PendingApprovalCodexBrief = DisplayOrPlaceholder(state.PendingApproval.CodexBrief);
+        PendingApprovalCodexBrief = DisplayOrPlaceholder(state.PendingApproval.ExecutorBrief);
+        PendingApprovalExecutorLabel = $"批准后发送给: {ResolvePhaseExecutorLabel(state.PendingApproval.Phase == AutomationPhase.None ? state.Phase : state.PendingApproval.Phase)}";
     }
 
     public void ResetAutomationState()
@@ -1451,6 +1667,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         PendingApprovalSteps = "暂无";
         PendingApprovalAcceptance = "暂无";
         PendingApprovalCodexBrief = "暂无";
+        PendingApprovalExecutorLabel = "暂无";
     }
 
     private static string JoinLines(IEnumerable<string> lines)
@@ -1564,6 +1781,126 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             "manual-each-stage" => "manual-each-stage",
             "manual-first-then-auto" => "manual-first-then-auto",
             _ => "full-auto-loop",
+        };
+    }
+
+    private static string NormalizeExecutorKey(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "codex" => "codex",
+            _ => "claude",
+        };
+    }
+
+    private static string NormalizeAutomationParallelismPolicy(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "conservative" => "conservative",
+            "aggressive" => "aggressive",
+            "balanced" => "balanced",
+            _ => "auto",
+        };
+    }
+
+    private static string NormalizeAutomationTemplateKey(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "bugfix" => "bugfix",
+            "refactor" => "refactor",
+            "research" => "research",
+            _ => "feature",
+        };
+    }
+
+    private static string ResolveExecutorKey(AgentRole role)
+    {
+        return role == AgentRole.Codex ? "codex" : "claude";
+    }
+
+    private static string ResolveParallelismKey(AutomationParallelismPolicy policy)
+    {
+        return policy switch
+        {
+            AutomationParallelismPolicy.Conservative => "conservative",
+            AutomationParallelismPolicy.Aggressive => "aggressive",
+            AutomationParallelismPolicy.Balanced => "balanced",
+            _ => "auto",
+        };
+    }
+
+    private static AgentRole ParseExecutorRole(string value)
+    {
+        return NormalizeExecutorKey(value) switch
+        {
+            "codex" => AgentRole.Codex,
+            _ => AgentRole.Claude,
+        };
+    }
+
+    private static AutomationParallelismPolicy ParseAutomationParallelismPolicy(string value)
+    {
+        return NormalizeAutomationParallelismPolicy(value) switch
+        {
+            "conservative" => AutomationParallelismPolicy.Conservative,
+            "aggressive" => AutomationParallelismPolicy.Aggressive,
+            "balanced" => AutomationParallelismPolicy.Balanced,
+            _ => AutomationParallelismPolicy.Auto,
+        };
+    }
+
+    private string ResolvePhaseExecutorLabel(AutomationPhase phase)
+    {
+        if (phase == AutomationPhase.None)
+        {
+            return "暂无";
+        }
+
+        return ResolveExecutorLabel(ResolvePhaseExecutorKey(phase));
+    }
+
+    private string ResolvePhaseExecutorKey(AutomationPhase phase)
+    {
+        return phase switch
+        {
+            AutomationPhase.Phase1Research => _automationPhase1Executor,
+            AutomationPhase.Phase2Planning => _automationPhase2Executor,
+            AutomationPhase.Phase3Execution => _automationPhase3Executor,
+            AutomationPhase.Phase4Review => _automationPhase4Executor,
+            _ => _automationPhase1Executor,
+        };
+    }
+
+    private static string ResolveExecutorLabel(string executorKey)
+    {
+        return NormalizeExecutorKey(executorKey) switch
+        {
+            "codex" => "CODEX",
+            _ => "Claude",
+        };
+    }
+
+    private static string ResolveParallelismLabel(string policyKey)
+    {
+        return NormalizeAutomationParallelismPolicy(policyKey) switch
+        {
+            "conservative" => "保守",
+            "aggressive" => "激进",
+            "balanced" => "均衡",
+            _ => "自动",
+        };
+    }
+
+    private static string BuildAutomationTemplatePrompt(string templateKey)
+    {
+        return NormalizeAutomationTemplateKey(templateKey) switch
+        {
+            "bugfix" => "请先复现并定位问题，输出可审批的修复计划，再执行最小修复、补验证并完成回归。",
+            "refactor" => "请先梳理现有实现与风险边界，输出可审批的重构计划，再分阶段实施、验证并完成收尾。",
+            "research" => "请先围绕当前目录做只读调研，整理结构化结论、风险与建议，不要直接修改功能代码。",
+            _ => "请围绕当前工作目录中的项目需求推进开发，先拆成可审批的阶段计划，再驱动执行与验证，直到完成。",
         };
     }
 

@@ -20,6 +20,12 @@ public sealed class AutomationRunState
 
     public TaskMdStatus TaskMdStatus { get; init; } = TaskMdStatus.Unknown;
 
+    public AgentRole? ActiveExecutor { get; init; }
+
+    public AutomationParallelismPolicy? ParallelismPolicy { get; init; }
+
+    public int? MaxParallelSubagents { get; init; }
+
     public int TaskCount { get; init; }
 
     public int CompletedTaskCount { get; init; }

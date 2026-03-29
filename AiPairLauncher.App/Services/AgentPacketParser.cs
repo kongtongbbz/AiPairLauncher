@@ -136,8 +136,15 @@ public sealed class AgentPacketParser : IAgentPacketParser
             : TaskMdStatus.Unknown;
         var reviewFocus = GetSectionOrScalar(sectionValues, scalarValues, "review_focus");
         var body = GetSectionOrScalar(sectionValues, scalarValues, "body");
-        var codexBrief = GetSectionOrScalar(sectionValues, scalarValues, "codex_brief");
-
+        var executorBrief = GetSectionOrScalar(sectionValues, scalarValues, "executor_brief");
+        if (string.IsNullOrWhiteSpace(executorBrief))
+        {
+            executorBrief = GetSectionOrScalar(sectionValues, scalarValues, "handoff_brief");
+        }
+        if (string.IsNullOrWhiteSpace(executorBrief))
+        {
+            executorBrief = GetSectionOrScalar(sectionValues, scalarValues, "codex_brief");
+        }
         var packet = new AgentPacket
         {
             Role = role,
@@ -172,7 +179,7 @@ public sealed class AgentPacketParser : IAgentPacketParser
                 taskMdStatus,
                 reviewFocus,
                 body,
-                codexBrief),
+                executorBrief),
             RawText = block,
             Title = title,
             Summary = summary,
@@ -189,7 +196,7 @@ public sealed class AgentPacketParser : IAgentPacketParser
             Blockers = blockers,
             ReviewFocus = reviewFocus,
             Body = body,
-            CodexBrief = codexBrief,
+            ExecutorBrief = executorBrief,
         };
 
         ValidateRequiredContent(packet);
@@ -198,16 +205,16 @@ public sealed class AgentPacketParser : IAgentPacketParser
 
     private static void ValidateRequiredContent(AgentPacket packet)
     {
-        if (packet.Kind == PacketKind.StagePlan && string.IsNullOrWhiteSpace(packet.CodexBrief))
+        if (packet.Kind == PacketKind.StagePlan && string.IsNullOrWhiteSpace(packet.ExecutorBrief))
         {
-            throw new FormatException("stage_plan 缺少 codex_brief。");
+            throw new FormatException("stage_plan 缺少 executor_brief/handoff_brief/codex_brief。");
         }
 
         if (packet.Kind == PacketKind.ReviewDecision &&
             packet.Decision is ReviewDecision.NextStage or ReviewDecision.RetryStage &&
-            string.IsNullOrWhiteSpace(packet.CodexBrief))
+            string.IsNullOrWhiteSpace(packet.ExecutorBrief))
         {
-            throw new FormatException("review_decision 在 next_stage/retry_stage 时必须包含 codex_brief。");
+            throw new FormatException("review_decision 在 next_stage/retry_stage 时必须包含 executor_brief/handoff_brief/codex_brief。");
         }
     }
 
@@ -256,7 +263,7 @@ public sealed class AgentPacketParser : IAgentPacketParser
         TaskMdStatus taskMdStatus,
         string reviewFocus,
         string body,
-        string codexBrief)
+        string executorBrief)
     {
         var normalized = string.Join(
             "|",
@@ -283,7 +290,7 @@ public sealed class AgentPacketParser : IAgentPacketParser
             taskMdStatus,
             NormalizeWhitespace(reviewFocus),
             NormalizeWhitespace(body),
-            NormalizeWhitespace(codexBrief));
+            NormalizeWhitespace(executorBrief));
 
         var bytes = Encoding.UTF8.GetBytes(normalized);
         var hash = SHA256.HashData(bytes);

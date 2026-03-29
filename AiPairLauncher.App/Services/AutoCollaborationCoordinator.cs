@@ -70,21 +70,25 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             _isFirstStageManualGateSatisfied = false;
             _forceManualApprovalForNextStagePlan = false;
             _loopCts = new CancellationTokenSource();
+            var loopToken = _loopCts.Token;
 
+            var phase1Executor = ResolvePhaseExecutor(AutomationPhase.Phase1Research);
+            var phase1ExecutorLabel = ResolveExecutorLabel(phase1Executor);
             UpdateState(
                 phase: AutomationPhase.Phase1Research,
                 status: AutomationStageStatus.BootstrappingClaude,
                 currentStageId: null,
-                statusDetail: "正在注入 Claude Phase 1 调研提示词",
+                statusDetail: $"正在注入 {phase1ExecutorLabel} Phase 1 调研提示词",
                 taskMdPath: BuildTaskMdPath(session),
                 taskMdStatus: TaskMdStatus.Unknown);
 
-            var bootstrapPrompt = AutomationPromptFactory.BuildClaudeBootstrapPrompt(
+            var bootstrapPrompt = AutomationPromptFactory.BuildBootstrapPrompt(
+                phase1Executor,
                 session.WorkingDirectory,
                 settings.InitialTaskPrompt,
                 BuildTaskMdPath(session));
             await _wezTermService
-                .SendAutomationPromptAsync(session, AgentRole.Claude, bootstrapPrompt, settings.SubmitOnSend, cancellationToken)
+                .SendAutomationPromptAsync(session, phase1Executor, bootstrapPrompt, settings.SubmitOnSend, cancellationToken)
                 .ConfigureAwait(false);
 
             _lastProgressAt = DateTimeOffset.Now;
@@ -92,11 +96,11 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                 phase: AutomationPhase.Phase1Research,
                 status: AutomationStageStatus.WaitingForClaudePlan,
                 currentStageId: null,
-                statusDetail: "等待 Claude 输出 Phase 1 调研计划",
-                lastPacketSummary: "已向 Claude 发送 Phase 1 调研提示词",
+                statusDetail: $"等待 {phase1ExecutorLabel} 输出 Phase 1 调研计划",
+                lastPacketSummary: $"已向 {phase1ExecutorLabel} 发送 Phase 1 调研提示词",
                 taskMdPath: BuildTaskMdPath(session));
 
-            _loopTask = Task.Run(() => PollLoopAsync(_loopCts.Token), CancellationToken.None);
+            _loopTask = Task.Run(() => PollLoopAsync(loopToken), CancellationToken.None);
         }
         finally
         {
@@ -134,10 +138,11 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                 || state.AutoAdvanceEnabled;
             _forceManualApprovalForNextStagePlan = false;
             _loopCts = new CancellationTokenSource();
+            var loopToken = _loopCts.Token;
 
             if (state.IsActive && !state.HasPendingApproval)
             {
-                _loopTask = Task.Run(() => PollLoopAsync(_loopCts.Token), CancellationToken.None);
+                _loopTask = Task.Run(() => PollLoopAsync(loopToken), CancellationToken.None);
             }
 
             StateChanged?.Invoke(this, _state);
@@ -171,32 +176,45 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             {
                 case AutomationPhase.Phase1Research:
                     EnsureTaskMdStatus(_state.PendingApproval, TaskMdStatus.PendingPlan);
-                    await SendClaudePhasePromptAsync(
+                    var phase2Executor = ResolvePhaseExecutor(AutomationPhase.Phase2Planning);
+                    var phase2Label = ResolveExecutorLabel(phase2Executor);
+                    await SendPhasePromptAsync(
+                        executor: phase2Executor,
                         prompt: AutomationPromptFactory.BuildPhase2PlanningPrompt(
+                            phase2Executor,
                             _session!.WorkingDirectory,
                             _settings.InitialTaskPrompt,
                             ResolveTaskMdPath(_state.PendingApproval)),
                         phase: AutomationPhase.Phase2Planning,
                         currentStageId: _state.PendingApproval.StageId,
-                        statusDetail: "Phase 1 已批准，等待 Claude 输出 Phase 2 规划",
+                        statusDetail: $"Phase 1 已批准，等待 {phase2Label} 输出 Phase 2 规划",
                         lastPacketSummary: $"已批准: {_state.PendingApproval.Title}",
                         cancellationToken: cancellationToken).ConfigureAwait(false);
                     break;
                 case AutomationPhase.Phase2Planning:
                     EnsureTaskMdStatus(_state.PendingApproval, TaskMdStatus.Planned);
-                    await SendClaudePhasePromptAsync(
+                    var phase3Executor = ResolvePhaseExecutor(AutomationPhase.Phase3Execution);
+                    var phase3Label = ResolveExecutorLabel(phase3Executor);
+                    await SendPhasePromptAsync(
+                        executor: phase3Executor,
                         prompt: AutomationPromptFactory.BuildPhase3KickoffPrompt(
+                            phase3Executor,
                             _session!.WorkingDirectory,
                             _settings.InitialTaskPrompt,
                             ResolveTaskMdPath(_state.PendingApproval)),
                         phase: AutomationPhase.Phase3Execution,
                         currentStageId: null,
-                        statusDetail: "Phase 2 已批准，等待 Claude 输出 Phase 3 首个执行计划",
+                        statusDetail: $"Phase 2 已批准，等待 {phase3Label} 输出 Phase 3 首个执行计划",
                         lastPacketSummary: $"已批准: {_state.PendingApproval.Title}",
                         cancellationToken: cancellationToken).ConfigureAwait(false);
                     break;
                 default:
-                    await DispatchToCodexAsync(_state.PendingApproval, userNote, isAutomatic: false, cancellationToken).ConfigureAwait(false);
+                    await DispatchToExecutorAsync(
+                        _state.PendingApproval,
+                        ResolveExecutionExecutor(_state.PendingApproval.Phase),
+                        userNote,
+                        isAutomatic: false,
+                        cancellationToken).ConfigureAwait(false);
                     break;
             }
         }
@@ -218,9 +236,11 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                 throw new InvalidOperationException("当前没有待退回计划。");
             }
 
-            var prompt = AutomationPromptFactory.BuildClaudeRevisionPrompt(_state.PendingApproval, userNote, _settings.InitialTaskPrompt);
+            var revisionExecutor = ResolveRevisionExecutor(_state.PendingApproval.Phase);
+            var revisionLabel = ResolveExecutorLabel(revisionExecutor);
+            var prompt = AutomationPromptFactory.BuildRevisionPrompt(_state.PendingApproval, userNote, _settings.InitialTaskPrompt);
             await _wezTermService
-                .SendAutomationPromptAsync(_session!, AgentRole.Claude, prompt, _settings.SubmitOnSend, cancellationToken)
+                .SendAutomationPromptAsync(_session!, revisionExecutor, prompt, _settings.SubmitOnSend, cancellationToken)
                 .ConfigureAwait(false);
 
             _forceManualApprovalForNextStagePlan = true;
@@ -229,7 +249,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                 phase: _state.PendingApproval.Phase,
                 status: AutomationStageStatus.WaitingForClaudePlan,
                 currentStageId: _state.PendingApproval.StageId,
-                statusDetail: $"已退回阶段 {_state.PendingApproval.StageId}，等待 Claude 重拟计划",
+                statusDetail: $"已退回阶段 {_state.PendingApproval.StageId}，等待 {revisionLabel} 重拟计划",
                 lastPacketSummary: $"用户退回: {_state.PendingApproval.Title}",
                 taskMdPath: ResolveTaskMdPath(_state.PendingApproval),
                 taskMdStatus: _state.PendingApproval.TaskMdStatus,
@@ -326,55 +346,74 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             return;
         }
 
-        var paneId = _state.Status == AutomationStageStatus.WaitingForCodexReport
-            ? _session!.RightPaneId
-            : _session!.LeftPaneId;
+        var expectedExecutor = ResolveExpectedExecutorForState();
+        var primaryPaneId = ResolvePaneId(expectedExecutor);
+        var alternatePaneId = primaryPaneId == _session!.LeftPaneId ? _session.RightPaneId : _session.LeftPaneId;
+        var paneIds = primaryPaneId == alternatePaneId
+            ? [primaryPaneId]
+            : new[] { primaryPaneId, alternatePaneId };
 
-        var paneText = await _wezTermService
-            .ReadPaneTextAsync(_session!, paneId, _settings.CaptureLines, cancellationToken)
-            .ConfigureAwait(false);
-        var hasPaneProgress = RefreshPaneProgress(paneId, paneText);
+        var hasPaneProgress = false;
+        string? primaryParseError = null;
 
-        DetectInteractivePromptOrThrow(paneText);
-
-        var parseOutcome = _packetParser.ParseLatest(paneText);
-        switch (parseOutcome.Status)
+        foreach (var paneId in paneIds)
         {
-            case PacketParseStatus.NoPacket:
-                EnsureNotTimedOut(hasPaneProgress);
-                return;
-            case PacketParseStatus.Invalid:
-                throw new InvalidOperationException(parseOutcome.ErrorMessage ?? "结构化数据包解析失败。");
-            case PacketParseStatus.Success:
-                break;
-            default:
-                throw new InvalidOperationException("未知的解析结果。");
+            var paneText = await _wezTermService
+                .ReadPaneTextAsync(_session!, paneId, _settings.CaptureLines, cancellationToken)
+                .ConfigureAwait(false);
+            hasPaneProgress |= RefreshPaneProgress(paneId, paneText);
+
+            DetectInteractivePromptOrThrow(paneText, expectedExecutor);
+
+            var parseOutcome = _packetParser.ParseLatest(paneText);
+            switch (parseOutcome.Status)
+            {
+                case PacketParseStatus.NoPacket:
+                    continue;
+                case PacketParseStatus.Invalid:
+                    if (paneId == primaryPaneId)
+                    {
+                        primaryParseError = parseOutcome.ErrorMessage ?? "结构化数据包解析失败。";
+                    }
+
+                    continue;
+                case PacketParseStatus.Success:
+                    break;
+                default:
+                    throw new InvalidOperationException("未知的解析结果。");
+            }
+
+            var packet = parseOutcome.Packet ?? throw new InvalidOperationException("结构化包解析成功但没有生成数据包。");
+            var packetOccurrenceCount = CountPacketOccurrences(paneText, packet);
+            if (ShouldIgnoreProcessedPacket(packet, packetOccurrenceCount))
+            {
+                continue;
+            }
+
+            ValidatePacketForState(packet);
+            _processedFingerprints[packet.Fingerprint] = new ProcessedPacketState(_currentPollingRound, packetOccurrenceCount);
+            _lastProgressAt = DateTimeOffset.Now;
+
+            switch (_state.Status)
+            {
+                case AutomationStageStatus.WaitingForClaudePlan:
+                    await ProcessStagePlanAsync(packet, cancellationToken).ConfigureAwait(false);
+                    return;
+                case AutomationStageStatus.WaitingForCodexReport:
+                    await ProcessExecutionReportAsync(packet, cancellationToken).ConfigureAwait(false);
+                    return;
+                case AutomationStageStatus.WaitingForClaudeReview:
+                    await ProcessReviewDecisionAsync(packet, cancellationToken).ConfigureAwait(false);
+                    return;
+            }
         }
 
-        var packet = parseOutcome.Packet ?? throw new InvalidOperationException("结构化包解析成功但没有生成数据包。");
-        var packetOccurrenceCount = CountPacketOccurrences(paneText, packet);
-        if (ShouldIgnoreProcessedPacket(packet, packetOccurrenceCount))
+        if (!string.IsNullOrWhiteSpace(primaryParseError))
         {
-            EnsureNotTimedOut(hasPaneProgress);
-            return;
+            throw new InvalidOperationException(primaryParseError);
         }
 
-        ValidatePacketForState(packet);
-        _processedFingerprints[packet.Fingerprint] = new ProcessedPacketState(_currentPollingRound, packetOccurrenceCount);
-        _lastProgressAt = DateTimeOffset.Now;
-
-        switch (_state.Status)
-        {
-            case AutomationStageStatus.WaitingForClaudePlan:
-                await ProcessStagePlanAsync(packet, cancellationToken).ConfigureAwait(false);
-                break;
-            case AutomationStageStatus.WaitingForCodexReport:
-                await ProcessExecutionReportAsync(packet, cancellationToken).ConfigureAwait(false);
-                break;
-            case AutomationStageStatus.WaitingForClaudeReview:
-                await ProcessReviewDecisionAsync(packet, cancellationToken).ConfigureAwait(false);
-                break;
-        }
+        EnsureNotTimedOut(hasPaneProgress);
     }
 
     private async Task ProcessStagePlanAsync(AgentPacket packet, CancellationToken cancellationToken)
@@ -405,21 +444,29 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             return;
         }
 
-        await DispatchToCodexAsync(draft, userNote: null, isAutomatic: true, cancellationToken).ConfigureAwait(false);
+        await DispatchToExecutorAsync(
+            draft,
+            ResolveExecutionExecutor(draft.Phase),
+            userNote: null,
+            isAutomatic: true,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ProcessExecutionReportAsync(AgentPacket packet, CancellationToken cancellationToken)
     {
-        var prompt = AutomationPromptFactory.BuildClaudeReviewPrompt(packet, _settings.InitialTaskPrompt);
+        var reviewExecutor = packet.Phase == AutomationPhase.None
+            ? AgentRole.Claude
+            : ResolveReviewExecutor(AutomationPhase.Phase3Execution);
+        var prompt = AutomationPromptFactory.BuildReviewPrompt(reviewExecutor, packet, _settings.InitialTaskPrompt);
         await _wezTermService
-            .SendAutomationPromptAsync(_session!, AgentRole.Claude, prompt, _settings.SubmitOnSend, cancellationToken)
+            .SendAutomationPromptAsync(_session!, reviewExecutor, prompt, _settings.SubmitOnSend, cancellationToken)
             .ConfigureAwait(false);
 
         UpdateState(
             phase: packet.Phase == AutomationPhase.None ? _state.Phase : packet.Phase,
             status: AutomationStageStatus.WaitingForClaudeReview,
             currentStageId: packet.StageId,
-            statusDetail: $"已收到 Codex 的阶段 {packet.StageId} 回报，等待 Claude 审定",
+            statusDetail: $"已收到 {ResolveExecutorLabel(packet.Role)} 的阶段 {packet.StageId} 回报，等待 {ResolveExecutorLabel(reviewExecutor)} 审定",
             lastPacketSummary: packet.PacketSummary,
             currentTaskRef: packet.TaskRef,
             taskMdPath: packet.TaskMdPath ?? _state.TaskMdPath,
@@ -428,13 +475,17 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private async Task ProcessReviewDecisionAsync(AgentPacket packet, CancellationToken cancellationToken)
     {
-        if (_state.Phase == AutomationPhase.Phase3Execution && packet.Decision == ReviewDecision.Complete)
+        if (packet.Phase != AutomationPhase.None &&
+            _state.Phase == AutomationPhase.Phase3Execution &&
+            packet.Decision == ReviewDecision.Complete)
         {
+            var phase4Executor = ResolveReviewExecutor(AutomationPhase.Phase4Review);
             var prompt = AutomationPromptFactory.BuildPhase4ReviewPrompt(
+                phase4Executor,
                 _settings.InitialTaskPrompt,
                 ResolveTaskMdPath(packet));
             await _wezTermService
-                .SendAutomationPromptAsync(_session!, AgentRole.Claude, prompt, _settings.SubmitOnSend, cancellationToken)
+                .SendAutomationPromptAsync(_session!, phase4Executor, prompt, _settings.SubmitOnSend, cancellationToken)
                 .ConfigureAwait(false);
 
             _lastProgressAt = DateTimeOffset.Now;
@@ -442,7 +493,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                 phase: AutomationPhase.Phase4Review,
                 status: AutomationStageStatus.WaitingForClaudeReview,
                 currentStageId: packet.StageId,
-                statusDetail: $"阶段 {packet.StageId} 已完成，等待 Claude 输出 Phase 4 最终复核",
+                statusDetail: $"阶段 {packet.StageId} 已完成，等待 {ResolveExecutorLabel(phase4Executor)} 输出 Phase 4 最终复核",
                 lastPacketSummary: packet.PacketSummary,
                 taskMdPath: ResolveTaskMdPath(packet),
                 taskMdStatus: packet.TaskMdStatus == TaskMdStatus.Unknown ? _state.TaskMdStatus : packet.TaskMdStatus,
@@ -460,7 +511,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                         phase: AutomationPhase.Phase4Review,
                         status: AutomationStageStatus.Completed,
                         currentStageId: packet.StageId,
-                        statusDetail: $"Claude 已完成 Phase 4 复核，阶段 {packet.StageId} 闭环结束",
+                        statusDetail: $"{ResolveExecutorLabel(packet.Role)} 已完成 Phase 4 复核，阶段 {packet.StageId} 闭环结束",
                         lastPacketSummary: packet.PacketSummary,
                         taskMdPath: ResolveTaskMdPath(packet),
                         taskMdStatus: TaskMdStatus.Done,
@@ -475,7 +526,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                         phase: AutomationPhase.Phase4Review,
                         status: AutomationStageStatus.PausedOnError,
                         currentStageId: packet.StageId,
-                        statusDetail: $"Claude 在 Phase 4 将阶段 {packet.StageId} 标记为阻塞",
+                        statusDetail: $"{ResolveExecutorLabel(packet.Role)} 在 Phase 4 将阶段 {packet.StageId} 标记为阻塞",
                         lastPacketSummary: packet.PacketSummary,
                         lastError: string.IsNullOrWhiteSpace(packet.Body) ? packet.Summary : packet.Body,
                         taskMdPath: ResolveTaskMdPath(packet),
@@ -502,7 +553,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                     phase: packet.Phase == AutomationPhase.None ? _state.Phase : packet.Phase,
                     status: AutomationStageStatus.Completed,
                     currentStageId: packet.StageId,
-                    statusDetail: $"Claude 已判定阶段 {packet.StageId} 完成",
+                    statusDetail: $"{ResolveExecutorLabel(packet.Role)} 已判定阶段 {packet.StageId} 完成",
                     lastPacketSummary: packet.PacketSummary,
                     taskMdPath: ResolveTaskMdPath(packet),
                     taskMdStatus: packet.TaskMdStatus == TaskMdStatus.Unknown ? _state.TaskMdStatus : packet.TaskMdStatus,
@@ -513,7 +564,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                     phase: packet.Phase == AutomationPhase.None ? _state.Phase : packet.Phase,
                     status: AutomationStageStatus.PausedOnError,
                     currentStageId: packet.StageId,
-                    statusDetail: $"Claude 将阶段 {packet.StageId} 标记为阻塞",
+                    statusDetail: $"{ResolveExecutorLabel(packet.Role)} 将阶段 {packet.StageId} 标记为阻塞",
                     lastPacketSummary: packet.PacketSummary,
                     lastError: string.IsNullOrWhiteSpace(packet.Body) ? packet.Summary : packet.Body,
                     taskMdPath: ResolveTaskMdPath(packet),
@@ -548,7 +599,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                 Steps = draft.Steps,
                 AcceptanceCriteria = draft.AcceptanceCriteria,
                 TaskProgress = draft.TaskProgress,
-                CodexBrief = draft.CodexBrief,
+                ExecutorBrief = draft.ExecutorBrief,
             };
         }
 
@@ -559,36 +610,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             return;
         }
 
-        await DispatchToCodexAsync(draft, userNote: null, isAutomatic: true, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task DispatchToCodexAsync(
-        ApprovalDraft draft,
-        string? userNote,
-        bool isAutomatic,
-        CancellationToken cancellationToken)
-    {
-        var prompt = AutomationPromptFactory.BuildCodexExecutionPrompt(draft, userNote);
-        await _wezTermService
-            .SendAutomationPromptAsync(_session!, AgentRole.Codex, prompt, _settings.SubmitOnSend, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (isAutomatic)
-        {
-            _autoApprovedStageCount += 1;
-        }
-
-        _lastProgressAt = DateTimeOffset.Now;
-        var actionText = isAutomatic ? "已自动发送" : "已批准并发送";
-        UpdateState(
-            phase: draft.Phase,
-            status: AutomationStageStatus.WaitingForCodexReport,
-            currentStageId: draft.StageId,
-            statusDetail: $"{actionText}阶段 {draft.StageId} 给 Codex，等待执行回报",
-            lastPacketSummary: $"{actionText}: {draft.Title}",
-            currentTaskRef: draft.TaskRef,
-            taskMdPath: ResolveTaskMdPath(draft),
-            taskMdStatus: draft.TaskMdStatus);
+        await DispatchToExecutorAsync(draft, ResolveExecutionExecutor(draft.Phase), userNote: null, isAutomatic: true, cancellationToken).ConfigureAwait(false);
     }
 
     private ApprovalDraft BuildApprovalDraft(AgentPacket packet)
@@ -611,7 +633,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             Steps = packet.Steps,
             AcceptanceCriteria = packet.AcceptanceCriteria,
             TaskProgress = packet.TaskProgress,
-            CodexBrief = packet.CodexBrief,
+            ExecutorBrief = packet.ExecutorBrief,
         };
     }
 
@@ -664,7 +686,8 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private bool IsStagePlanExpected(AgentPacket packet)
     {
-        if (packet.Role != AgentRole.Claude || packet.Kind != PacketKind.StagePlan)
+        if (packet.Role != ResolvePhaseExecutor(_state.Phase == AutomationPhase.None ? AutomationPhase.Phase1Research : _state.Phase) ||
+            packet.Kind != PacketKind.StagePlan)
         {
             return false;
         }
@@ -686,7 +709,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private bool IsExecutionReportExpected(AgentPacket packet)
     {
-        return packet.Role == AgentRole.Codex &&
+        return packet.Role == ResolveExecutionExecutor(_state.Phase) &&
                packet.Kind == PacketKind.ExecutionReport &&
                (packet.Phase == AutomationPhase.None || packet.Phase == AutomationPhase.Phase3Execution) &&
                _state.CurrentStageId.HasValue &&
@@ -695,7 +718,12 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private bool IsReviewDecisionExpected(AgentPacket packet)
     {
-        if (packet.Role != AgentRole.Claude ||
+        if (packet.Role != ResolveReviewExecutor(
+                _state.Phase == AutomationPhase.None
+                    ? AutomationPhase.None
+                    : _state.Phase == AutomationPhase.Phase4Review
+                        ? AutomationPhase.Phase4Review
+                        : AutomationPhase.Phase3Execution) ||
             packet.Kind != PacketKind.ReviewDecision ||
             !_state.CurrentStageId.HasValue ||
             packet.Decision is null)
@@ -727,9 +755,10 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private void ValidateStagePlanPacket(AgentPacket packet)
     {
-        if (packet.Role != AgentRole.Claude || packet.Kind != PacketKind.StagePlan)
+        var expectedExecutor = ResolvePhaseExecutor(_state.Phase == AutomationPhase.None ? AutomationPhase.Phase1Research : _state.Phase);
+        if (packet.Role != expectedExecutor || packet.Kind != PacketKind.StagePlan)
         {
-            throw new InvalidOperationException("当前正在等待 Claude 的 stage_plan，但收到其他结构化包。");
+            throw new InvalidOperationException($"当前正在等待 {ResolveExecutorLabel(expectedExecutor)} 的 stage_plan，但收到其他结构化包。");
         }
 
         var isLegacyBootstrapPacket =
@@ -770,9 +799,10 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private void ValidateExecutionReportPacket(AgentPacket packet)
     {
-        if (packet.Role != AgentRole.Codex || packet.Kind != PacketKind.ExecutionReport)
+        var expectedExecutor = ResolveExecutionExecutor(_state.Phase);
+        if (packet.Role != expectedExecutor || packet.Kind != PacketKind.ExecutionReport)
         {
-            throw new InvalidOperationException("当前正在等待 Codex 的 execution_report，但收到其他结构化包。");
+            throw new InvalidOperationException($"当前正在等待 {ResolveExecutorLabel(expectedExecutor)} 的 execution_report，但收到其他结构化包。");
         }
 
         if (_state.Phase == AutomationPhase.Phase3Execution && packet.Phase == AutomationPhase.None)
@@ -793,9 +823,15 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private void ValidateReviewDecisionPacket(AgentPacket packet)
     {
-        if (packet.Role != AgentRole.Claude || packet.Kind != PacketKind.ReviewDecision)
+        var expectedExecutor = ResolveReviewExecutor(
+            _state.Phase == AutomationPhase.None
+                ? AutomationPhase.None
+                : _state.Phase == AutomationPhase.Phase4Review
+                    ? AutomationPhase.Phase4Review
+                    : AutomationPhase.Phase3Execution);
+        if (packet.Role != expectedExecutor || packet.Kind != PacketKind.ReviewDecision)
         {
-            throw new InvalidOperationException("当前正在等待 Claude 的 review_decision，但收到其他结构化包。");
+            throw new InvalidOperationException($"当前正在等待 {ResolveExecutorLabel(expectedExecutor)} 的 review_decision，但收到其他结构化包。");
         }
 
         if (!_state.CurrentStageId.HasValue)
@@ -1032,10 +1068,12 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private void EnterPendingApproval(ApprovalDraft draft, string packetSummary, string interventionReason)
     {
+        var draftPhase = draft.Phase == AutomationPhase.None ? _state.Phase : draft.Phase;
+        var executorLabel = ResolveExecutorLabel(ResolvePhaseExecutor(draftPhase));
         var statusDetail = draft.SourceKind switch
         {
-            PacketKind.StagePlan => $"收到 Claude 的阶段 {draft.StageId} 计划，等待人工接管",
-            PacketKind.ReviewDecision => $"收到 Claude 的{GetDecisionText(draft.ReviewDecision)}，等待人工接管",
+            PacketKind.StagePlan => $"收到 {executorLabel} 的阶段 {draft.StageId} 计划，等待人工接管",
+            PacketKind.ReviewDecision => $"收到 {executorLabel} 的{GetDecisionText(draft.ReviewDecision)}，等待人工接管",
             _ => $"收到阶段 {draft.StageId} 的待执行计划，等待人工接管",
         };
 
@@ -1145,6 +1183,9 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             LastPacketSummary = lastPacketSummary ?? _state.LastPacketSummary,
             TaskMdPath = resolvedTaskMdPath,
             TaskMdStatus = resolvedTaskMdStatus,
+            ActiveExecutor = ResolveActiveExecutor(phase ?? _state.Phase, status, pendingApproval),
+            ParallelismPolicy = _settings.ParallelismPolicy,
+            MaxParallelSubagents = _settings.MaxParallelSubagents,
             TaskCount = resolvedTaskCount,
             CompletedTaskCount = resolvedCompletedTaskCount,
             PendingApproval = pendingApproval,
@@ -1171,7 +1212,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             or AutomationStageStatus.WaitingForClaudeReview;
     }
 
-    private void DetectInteractivePromptOrThrow(string paneText)
+    private void DetectInteractivePromptOrThrow(string paneText, AgentRole expectedExecutor)
     {
         if (string.IsNullOrWhiteSpace(paneText))
         {
@@ -1179,6 +1220,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         }
 
         if (_state.Status == AutomationStageStatus.WaitingForClaudePlan &&
+            expectedExecutor == AgentRole.Claude &&
             paneText.Contains("Quick safety check:", StringComparison.OrdinalIgnoreCase) &&
             paneText.Contains("Yes, I trust this folder", StringComparison.OrdinalIgnoreCase))
         {
@@ -1188,7 +1230,82 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private readonly record struct ProcessedPacketState(int PollingRound, int OccurrenceCount);
 
-    private async Task SendClaudePhasePromptAsync(
+    private AgentRole ResolvePhaseExecutor(AutomationPhase phase)
+    {
+        return phase switch
+        {
+            AutomationPhase.Phase2Planning => _settings.Phase2Executor,
+            AutomationPhase.Phase3Execution => _settings.Phase3Executor,
+            AutomationPhase.Phase4Review => _settings.Phase4Executor,
+            _ => _settings.Phase1Executor,
+        };
+    }
+
+    private AgentRole ResolveExecutionExecutor(AutomationPhase phase = AutomationPhase.Phase3Execution)
+    {
+        return phase == AutomationPhase.None ? AgentRole.Codex : ResolvePhaseExecutor(AutomationPhase.Phase3Execution);
+    }
+
+    private AgentRole ResolveReviewExecutor(AutomationPhase phase)
+    {
+        return phase == AutomationPhase.None ? AgentRole.Claude : ResolvePhaseExecutor(phase);
+    }
+
+    private AgentRole ResolveRevisionExecutor(AutomationPhase phase)
+    {
+        return phase == AutomationPhase.None ? AgentRole.Claude : ResolvePhaseExecutor(phase);
+    }
+
+    private AgentRole ResolveExpectedExecutorForState()
+    {
+        return _state.Status switch
+        {
+            AutomationStageStatus.WaitingForCodexReport => ResolveExecutionExecutor(_state.Phase),
+            AutomationStageStatus.WaitingForClaudeReview => ResolveReviewExecutor(
+                _state.Phase == AutomationPhase.None
+                    ? AutomationPhase.None
+                    : _state.Phase == AutomationPhase.Phase4Review
+                    ? AutomationPhase.Phase4Review
+                    : AutomationPhase.Phase3Execution),
+            _ => ResolvePhaseExecutor(_state.Phase == AutomationPhase.None ? AutomationPhase.Phase1Research : _state.Phase),
+        };
+    }
+
+    private static string ResolveExecutorLabel(AgentRole role)
+    {
+        return role == AgentRole.Codex ? "CODEX" : "Claude";
+    }
+
+    private int ResolvePaneId(AgentRole role)
+    {
+        EnsureSession();
+        return role == AgentRole.Codex ? _session!.RightPaneId : _session!.LeftPaneId;
+    }
+
+    private AgentRole? ResolveActiveExecutor(AutomationPhase phase, AutomationStageStatus status, ApprovalDraft? pendingApproval)
+    {
+        return status switch
+        {
+            AutomationStageStatus.BootstrappingClaude => ResolvePhaseExecutor(phase == AutomationPhase.None ? AutomationPhase.Phase1Research : phase),
+            AutomationStageStatus.WaitingForClaudePlan => ResolvePhaseExecutor(phase == AutomationPhase.None ? AutomationPhase.Phase1Research : phase),
+            AutomationStageStatus.WaitingForCodexReport => ResolveExecutionExecutor(phase),
+            AutomationStageStatus.WaitingForClaudeReview => ResolveReviewExecutor(
+                phase == AutomationPhase.None
+                    ? AutomationPhase.None
+                    : phase == AutomationPhase.Phase4Review
+                        ? AutomationPhase.Phase4Review
+                        : AutomationPhase.Phase3Execution),
+            AutomationStageStatus.PendingUserApproval when pendingApproval is not null =>
+                pendingApproval.Phase == AutomationPhase.None
+                    ? AgentRole.Claude
+                    : ResolvePhaseExecutor(pendingApproval.Phase),
+            _ when phase != AutomationPhase.None => ResolvePhaseExecutor(phase),
+            _ => null,
+        };
+    }
+
+    private async Task SendPhasePromptAsync(
+        AgentRole executor,
         string prompt,
         AutomationPhase phase,
         int? currentStageId,
@@ -1197,7 +1314,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         CancellationToken cancellationToken)
     {
         await _wezTermService
-            .SendAutomationPromptAsync(_session!, AgentRole.Claude, prompt, _settings.SubmitOnSend, cancellationToken)
+            .SendAutomationPromptAsync(_session!, executor, prompt, _settings.SubmitOnSend, cancellationToken)
             .ConfigureAwait(false);
 
         _lastProgressAt = DateTimeOffset.Now;
@@ -1210,6 +1327,36 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             taskMdPath: BuildTaskMdPath(_session!));
     }
 
+    private async Task DispatchToExecutorAsync(
+        ApprovalDraft draft,
+        AgentRole executor,
+        string? userNote,
+        bool isAutomatic,
+        CancellationToken cancellationToken)
+    {
+        var prompt = AutomationPromptFactory.BuildExecutionPrompt(executor, draft, userNote);
+        await _wezTermService
+            .SendAutomationPromptAsync(_session!, executor, prompt, _settings.SubmitOnSend, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (isAutomatic)
+        {
+            _autoApprovedStageCount += 1;
+        }
+
+        _lastProgressAt = DateTimeOffset.Now;
+        var actionText = isAutomatic ? "已自动发送" : "已批准并发送";
+        UpdateState(
+            phase: draft.Phase,
+            status: AutomationStageStatus.WaitingForCodexReport,
+            currentStageId: draft.StageId,
+            statusDetail: $"{actionText}阶段 {draft.StageId} 给 {ResolveExecutorLabel(executor)}，等待执行回报",
+            lastPacketSummary: $"{actionText}: {draft.Title}",
+            currentTaskRef: draft.TaskRef,
+            taskMdPath: ResolveTaskMdPath(draft),
+            taskMdStatus: draft.TaskMdStatus);
+    }
+
     private string BuildTaskMdPath(LauncherSession session)
     {
         return TaskMdPathResolver.BuildDefault(session.WorkingDirectory);
@@ -1217,12 +1364,12 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private string ResolveTaskMdPath(ApprovalDraft draft)
     {
-        if (!string.IsNullOrWhiteSpace(draft.TaskMdPath))
+        if (!string.IsNullOrWhiteSpace(draft.TaskMdPath) && File.Exists(draft.TaskMdPath))
         {
             return draft.TaskMdPath;
         }
 
-        if (!string.IsNullOrWhiteSpace(_state.TaskMdPath))
+        if (!string.IsNullOrWhiteSpace(_state.TaskMdPath) && File.Exists(_state.TaskMdPath))
         {
             return _state.TaskMdPath;
         }
@@ -1233,12 +1380,12 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private string ResolveTaskMdPath(AgentPacket packet)
     {
-        if (!string.IsNullOrWhiteSpace(packet.TaskMdPath))
+        if (!string.IsNullOrWhiteSpace(packet.TaskMdPath) && File.Exists(packet.TaskMdPath))
         {
             return packet.TaskMdPath;
         }
 
-        if (!string.IsNullOrWhiteSpace(_state.TaskMdPath))
+        if (!string.IsNullOrWhiteSpace(_state.TaskMdPath) && File.Exists(_state.TaskMdPath))
         {
             return _state.TaskMdPath;
         }

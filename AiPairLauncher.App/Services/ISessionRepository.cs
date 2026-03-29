@@ -52,6 +52,10 @@ public interface ISessionRepository
 
     Task<IReadOnlyList<AutomationEventRecord>> ListAutomationEventsAsync(string sessionId, int take = 20, CancellationToken cancellationToken = default);
 
+    Task SaveTaskMdRevisionAsync(TaskMdRevisionRecord revisionRecord, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<TaskMdRevisionRecord>> ListTaskMdRevisionsAsync(string sessionId, int take = 50, CancellationToken cancellationToken = default);
+
     Task SaveAutomationSnapshotAsync(PersistedAutomationSnapshot snapshot, CancellationToken cancellationToken = default);
 
     Task<PersistedAutomationSnapshot?> GetAutomationSnapshotAsync(string sessionId, CancellationToken cancellationToken = default);

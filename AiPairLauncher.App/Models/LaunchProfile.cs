@@ -42,6 +42,20 @@ public sealed class LaunchProfile
 
     public bool AutomationSubmitOnSend { get; init; } = true;
 
+    public AgentRole Phase1Executor { get; init; } = AgentRole.Claude;
+
+    public AgentRole Phase2Executor { get; init; } = AgentRole.Claude;
+
+    public AgentRole Phase3Executor { get; init; } = AgentRole.Codex;
+
+    public AgentRole Phase4Executor { get; init; } = AgentRole.Claude;
+
+    public AutomationParallelismPolicy ParallelismPolicy { get; init; } = AutomationParallelismPolicy.Auto;
+
+    public int MaxParallelSubagents { get; init; } = 4;
+
+    public string AutomationTemplateKey { get; init; } = "feature";
+
     public bool IsBuiltIn { get; init; }
 
     public bool DefaultUseWorktree { get; init; }
