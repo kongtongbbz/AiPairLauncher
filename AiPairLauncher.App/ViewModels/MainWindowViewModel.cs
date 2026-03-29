@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using AiPairLauncher.App.Models;
+using AiPairLauncher.App.Services;
 
 namespace AiPairLauncher.App.ViewModels;
 
@@ -135,6 +136,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string _pendingApprovalAcceptance = "暂无";
     private string _pendingApprovalCodexBrief = "暂无";
     private string _pendingApprovalExecutorLabel = "暂无";
+    private AutomationInterventionKind _pendingApprovalActionKind = AutomationInterventionKind.Approval;
     private string _sessionSearchText = string.Empty;
     private string _selectedSessionStatusFilter = "all";
     private string _selectedSessionGroupFilter = "__all__";
@@ -377,6 +379,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanCopySelectedSessionConfig));
             OnPropertyChanged(nameof(CanStartAutomation));
             OnPropertyChanged(nameof(AutomationStartHint));
+            RaiseAutomationStartChanged();
         }
     }
 
@@ -516,6 +519,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             }
 
             OnPropertyChanged(nameof(AutomationPhaseExecutorSummary));
+            RaiseAutomationStartChanged();
         }
     }
 
@@ -531,6 +535,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             }
 
             OnPropertyChanged(nameof(AutomationPhaseExecutorSummary));
+            RaiseAutomationStartChanged();
         }
     }
 
@@ -546,6 +551,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             }
 
             OnPropertyChanged(nameof(AutomationPhaseExecutorSummary));
+            RaiseAutomationStartChanged();
         }
     }
 
@@ -561,6 +567,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             }
 
             OnPropertyChanged(nameof(AutomationPhaseExecutorSummary));
+            RaiseAutomationStartChanged();
         }
     }
 
@@ -774,13 +781,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         set => SetField(ref _selectedSessionReconnectSummary, value);
     }
 
-    public string AutomationStartHint => SelectedSessionRecord switch
+    public string AutomationStartHint
     {
-        null => "请先选择或启动一个会话。",
-        { HealthStatus: SessionHealthStatus.Detached } => "当前会话已断开，点击“重连会话”或直接点击“启动”自动尝试恢复，失败时会显示具体原因。",
-        _ when IsAutomationActive => "当前自动编排正在运行中。",
-        _ => "当前会话满足自动编排启动条件；普通双栏会话也可直接升级为自动编排会话。",
-    };
+        get
+        {
+            if (IsAutomationActive)
+            {
+                return "当前自动编排正在运行中。";
+            }
+
+            var firstBlocking = GetAutomationStartChecks().FirstOrDefault(static check => !check.IsBlockingSatisfied);
+            if (!string.IsNullOrWhiteSpace(firstBlocking.FailureMessage))
+            {
+                return firstBlocking.FailureMessage;
+            }
+
+            return "当前会话满足自动编排启动条件；普通双栏会话也可直接升级为自动编排会话。";
+        }
+    }
 
     public string EditableSessionDisplayName
     {
@@ -1027,6 +1045,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanTogglePinSelectedSession));
             OnPropertyChanged(nameof(CanCopySelectedSessionConfig));
             OnPropertyChanged(nameof(CanEditPhaseExecutors));
+            RaiseAutomationStartChanged();
         }
     }
 
@@ -1042,6 +1061,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
             OnPropertyChanged(nameof(CanSend));
             OnPropertyChanged(nameof(CanStartAutomation));
+            RaiseAutomationStartChanged();
         }
     }
 
@@ -1057,6 +1077,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
             OnPropertyChanged(nameof(CanApproveAutomation));
             OnPropertyChanged(nameof(CanRejectAutomation));
+            OnPropertyChanged(nameof(CanContinueWaitingAutomation));
+            OnPropertyChanged(nameof(CanRetryAutomationStage));
+            OnPropertyChanged(nameof(HasPendingApprovalPlan));
+            OnPropertyChanged(nameof(HasPendingTimeoutIntervention));
         }
     }
 
@@ -1074,6 +1098,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanStopAutomation));
             OnPropertyChanged(nameof(CanEditPhaseExecutors));
             OnPropertyChanged(nameof(AutomationStartHint));
+            RaiseAutomationStartChanged();
         }
     }
 
@@ -1088,11 +1113,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public bool CanStartAutomation =>
         !IsBusy &&
         HasSelectedSession &&
-        !IsAutomationActive;
+        !IsAutomationActive &&
+        GetAutomationStartChecks().All(static check => check.IsBlockingSatisfied);
 
-    public bool CanApproveAutomation => !IsBusy && HasPendingApproval;
+    public bool CanApproveAutomation => !IsBusy && HasPendingApprovalPlan;
 
-    public bool CanRejectAutomation => !IsBusy && HasPendingApproval;
+    public bool CanRejectAutomation => !IsBusy && HasPendingApprovalPlan;
+
+    public bool CanContinueWaitingAutomation => !IsBusy && HasPendingTimeoutIntervention;
+
+    public bool CanRetryAutomationStage => !IsBusy && HasPendingTimeoutIntervention;
 
     public bool CanStopAutomation => !IsBusy && IsAutomationActive;
 
@@ -1121,6 +1151,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public bool CanEditPhaseExecutors => !IsBusy && !IsAutomationActive;
 
     public bool HasPendingSessions => PendingSessionRecords.Count > 0;
+
+    public bool HasPendingApprovalPlan => HasPendingApproval && _pendingApprovalActionKind == AutomationInterventionKind.Approval;
+
+    public bool HasPendingTimeoutIntervention => HasPendingApproval && _pendingApprovalActionKind == AutomationInterventionKind.Timeout;
 
     public IReadOnlyList<ModeOption> ClaudeModeOptions => ClaudeModes;
 
@@ -1173,6 +1207,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public string AutomationPhaseExecutorSummary =>
         $"P1={ResolveExecutorLabel(_automationPhase1Executor)} / P2={ResolveExecutorLabel(_automationPhase2Executor)} / P3={ResolveExecutorLabel(_automationPhase3Executor)} / P4={ResolveExecutorLabel(_automationPhase4Executor)}";
+
+    public string AutomationPreflightSessionStatus => FormatAutomationStartCheck(GetAutomationSessionCheck());
+
+    public string AutomationPreflightTaskDocumentStatus => FormatAutomationStartCheck(GetAutomationTaskDocumentCheck());
+
+    public string AutomationPreflightExecutorStatus => FormatAutomationStartCheck(GetAutomationExecutorCheck());
+
+    public string AutomationPreflightPromptStatus => FormatAutomationStartCheck(GetAutomationPromptCheck());
 
     public void ReplaceDependencies(IEnumerable<DependencyStatus> dependencies)
     {
@@ -1428,6 +1470,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             return;
         }
 
+        _pendingApprovalActionKind = state.PendingApproval.InterventionKind;
         HasPendingApproval = true;
         PendingApprovalStage = $"阶段 {state.PendingApproval.StageId}";
         PendingApprovalTitle = DisplayOrPlaceholder(state.PendingApproval.Title);
@@ -1436,7 +1479,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         PendingApprovalSteps = JoinLines(state.PendingApproval.Steps);
         PendingApprovalAcceptance = JoinLines(state.PendingApproval.AcceptanceCriteria);
         PendingApprovalCodexBrief = DisplayOrPlaceholder(state.PendingApproval.ExecutorBrief);
-        PendingApprovalExecutorLabel = $"批准后发送给: {ResolvePhaseExecutorLabel(state.PendingApproval.Phase == AutomationPhase.None ? state.Phase : state.PendingApproval.Phase)}";
+        PendingApprovalExecutorLabel = state.PendingApproval.InterventionKind == AutomationInterventionKind.Timeout
+            ? "操作建议：继续等待 / 重试本阶段 / 终止编排"
+            : $"批准后发送给: {ResolvePhaseExecutorLabel(state.PendingApproval.Phase == AutomationPhase.None ? state.Phase : state.PendingApproval.Phase)}";
     }
 
     public void ResetAutomationState()
@@ -1673,8 +1718,112 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                && source.Contains(keyword, StringComparison.OrdinalIgnoreCase);
     }
 
+    private void RaiseAutomationStartChanged()
+    {
+        OnPropertyChanged(nameof(CanStartAutomation));
+        OnPropertyChanged(nameof(AutomationStartHint));
+        OnPropertyChanged(nameof(AutomationPreflightSessionStatus));
+        OnPropertyChanged(nameof(AutomationPreflightTaskDocumentStatus));
+        OnPropertyChanged(nameof(AutomationPreflightExecutorStatus));
+        OnPropertyChanged(nameof(AutomationPreflightPromptStatus));
+    }
+
+    private IReadOnlyList<AutomationStartCheck> GetAutomationStartChecks()
+    {
+        return
+        [
+            GetAutomationSessionCheck(),
+            GetAutomationTaskDocumentCheck(),
+            GetAutomationExecutorCheck(),
+            GetAutomationPromptCheck(),
+        ];
+    }
+
+    private AutomationStartCheck GetAutomationSessionCheck()
+    {
+        if (!HasSelectedSession)
+        {
+            return new AutomationStartCheck(
+                "会话运行中",
+                IsBlockingSatisfied: false,
+                SuccessMessage: "已选择会话",
+                FailureMessage: "请先选择或启动一个会话。");
+        }
+
+        if (SelectedSessionRecord!.HealthStatus == SessionHealthStatus.Detached)
+        {
+            return new AutomationStartCheck(
+                "会话运行中",
+                IsBlockingSatisfied: false,
+                SuccessMessage: "会话在线",
+                FailureMessage: "当前会话已断开，请先重连。");
+        }
+
+        return new AutomationStartCheck(
+            "会话运行中",
+            IsBlockingSatisfied: true,
+            SuccessMessage: "会话在线，可启动自动编排。",
+            FailureMessage: "会话状态异常。");
+    }
+
+    private AutomationStartCheck GetAutomationTaskDocumentCheck()
+    {
+        if (!HasSelectedSession)
+        {
+            return new AutomationStartCheck(
+                "task.md 存在",
+                IsBlockingSatisfied: false,
+                SuccessMessage: "已检测 task.md",
+                FailureMessage: "请先选择会话。");
+        }
+
+        var taskMdPath = SelectedSessionRecord!.StatusSnapshot.TaskMdPath;
+        if (string.IsNullOrWhiteSpace(taskMdPath))
+        {
+            taskMdPath = TaskMdPathResolver.BuildDefault(SelectedSessionRecord.Session.WorkingDirectory);
+        }
+
+        var exists = !string.IsNullOrWhiteSpace(taskMdPath) && File.Exists(taskMdPath);
+        return new AutomationStartCheck(
+            "task.md 存在",
+            IsBlockingSatisfied: exists,
+            SuccessMessage: $"已检测到 task.md：{taskMdPath}",
+            FailureMessage: $"未找到 task.md（预期路径：{taskMdPath}）。");
+    }
+
+    private AutomationStartCheck GetAutomationExecutorCheck()
+    {
+        var configured = IsValidExecutorKey(_automationPhase1Executor)
+            && IsValidExecutorKey(_automationPhase2Executor)
+            && IsValidExecutorKey(_automationPhase3Executor)
+            && IsValidExecutorKey(_automationPhase4Executor);
+        return new AutomationStartCheck(
+            "Phase 执行器配置",
+            IsBlockingSatisfied: configured,
+            SuccessMessage: "Phase 执行器配置完整。",
+            FailureMessage: "Phase 执行器配置不完整，请检查 P1~P4。");
+    }
+
+    private AutomationStartCheck GetAutomationPromptCheck()
+    {
+        var hasPrompt = !string.IsNullOrWhiteSpace(_automationTaskPrompt);
+        return new AutomationStartCheck(
+            "任务目标",
+            IsBlockingSatisfied: hasPrompt,
+            SuccessMessage: "任务目标已配置。",
+            FailureMessage: "自动编排任务目标不能为空。");
+    }
+
+    private static string FormatAutomationStartCheck(AutomationStartCheck check)
+    {
+        var icon = check.IsBlockingSatisfied ? "✓" : "✗";
+        var message = check.IsBlockingSatisfied ? check.SuccessMessage : check.FailureMessage;
+        return $"{icon} {check.Label} · {message}";
+    }
+
     private void ClearPendingApproval()
     {
+        _pendingApprovalActionKind = AutomationInterventionKind.Approval;
         HasPendingApproval = false;
         PendingApprovalStage = "暂无";
         PendingApprovalTitle = "暂无";
@@ -1724,6 +1873,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             _ => "暂无",
         };
     }
+
+    private readonly record struct AutomationStartCheck(
+        string Label,
+        bool IsBlockingSatisfied,
+        string SuccessMessage,
+        string FailureMessage);
 
     private static string ResolveAppVersion()
     {
@@ -1807,6 +1962,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             "codex" => "codex",
             _ => "claude",
         };
+    }
+
+    private static bool IsValidExecutorKey(string? value)
+    {
+        var normalized = value?.Trim().ToLowerInvariant();
+        return normalized is "claude" or "codex";
     }
 
     private static string NormalizeAutomationParallelismPolicy(string? value)

@@ -46,6 +46,7 @@ public partial class App : System.Windows.Application
                 sessionMonitorService,
                 sessionRuntimeRegistry,
                 wezTermService,
+                _notificationService,
                 _appThemeService,
                 currentTheme);
             MainWindow = window;

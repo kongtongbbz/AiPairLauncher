@@ -639,8 +639,9 @@ public sealed class AutoCollaborationCoordinatorTests
 
         await coordinator.StartAsync(AutomationTestHelpers.CreateSession(), CreateFullAutoSettings(timeoutSeconds: 1));
 
-        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PausedOnError, 4000));
-        Assert.Contains("未收到新的结构化输出", coordinator.GetCurrentState().LastError);
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval, 8000));
+        Assert.Equal(AutomationInterventionKind.Timeout, coordinator.GetCurrentState().PendingApproval?.InterventionKind);
+        Assert.Contains("未收到新的结构化输出", coordinator.GetCurrentState().InterventionReason);
     }
 
     [Fact(DisplayName = "test_pane_output_change_resets_timeout_while_waiting_for_codex_report")]
@@ -685,9 +686,46 @@ public sealed class AutoCollaborationCoordinatorTests
         Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.WaitingForClaudeReview));
 
         Assert.True(await AutomationTestHelpers.WaitForConditionAsync(
-            () => coordinator.GetCurrentState().Status == AutomationStageStatus.PausedOnError,
-            5000));
-        Assert.Contains("未收到新的结构化输出", coordinator.GetCurrentState().LastError);
+            () => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval,
+            10000));
+        Assert.Equal(AutomationInterventionKind.Timeout, coordinator.GetCurrentState().PendingApproval?.InterventionKind);
+        Assert.Contains("未收到新的结构化输出", coordinator.GetCurrentState().InterventionReason);
+    }
+
+    [Fact(DisplayName = "test_timeout_intervention_can_continue_waiting")]
+    public async Task TimeoutInterventionCanContinueWaitingAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+
+        await coordinator.StartAsync(AutomationTestHelpers.CreateSession(), CreateFullAutoSettings(timeoutSeconds: 1));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval, 4000));
+
+        await coordinator.ContinueWaitingAsync();
+
+        Assert.Equal(AutomationStageStatus.WaitingForClaudePlan, coordinator.GetCurrentState().Status);
+        Assert.Contains("继续等待阶段", coordinator.GetCurrentState().LastPacketSummary);
+
+        await coordinator.StopAsync();
+    }
+
+    [Fact(DisplayName = "test_timeout_intervention_can_retry_current_stage")]
+    public async Task TimeoutInterventionCanRetryCurrentStageAsync()
+    {
+        var fakeWezTerm = new FakeWezTermService();
+        var coordinator = new AutoCollaborationCoordinator(fakeWezTerm, new AgentPacketParser());
+
+        await coordinator.StartAsync(AutomationTestHelpers.CreateSession(), CreateFullAutoSettings(timeoutSeconds: 1));
+        Assert.True(await AutomationTestHelpers.WaitForConditionAsync(() => coordinator.GetCurrentState().Status == AutomationStageStatus.PendingUserApproval, 4000));
+
+        var sentPromptCount = fakeWezTerm.SentAutomationPrompts.Count;
+        await coordinator.RetryCurrentStageAsync();
+
+        Assert.True(fakeWezTerm.SentAutomationPrompts.Count > sentPromptCount);
+        Assert.Equal(AutomationStageStatus.WaitingForClaudePlan, coordinator.GetCurrentState().Status);
+        Assert.Contains("已手动重试阶段", coordinator.GetCurrentState().LastPacketSummary);
+
+        await coordinator.StopAsync();
     }
 
     [Fact(DisplayName = "test_pause_on_claude_trust_prompt")]

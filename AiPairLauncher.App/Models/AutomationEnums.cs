@@ -58,6 +58,12 @@ public enum AutomationParallelismPolicy
     Auto,
 }
 
+public enum AutomationInterventionKind
+{
+    Approval,
+    Timeout,
+}
+
 public enum PacketParseStatus
 {
     NoPacket,

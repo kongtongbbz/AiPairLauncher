@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using AiPairLauncher.App.Models;
 using AiPairLauncher.App.Services;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace AiPairLauncher.Tests;
@@ -300,8 +301,61 @@ public sealed class SessionStoreTests : IDisposable
         Assert.Contains(profiles, item => item.Name == "自动闭环" && item.IsBuiltIn);
     }
 
+    [Fact(DisplayName = "test_schema_version_table_initialized_to_current_version")]
+    public async Task SchemaVersionTableInitializedToCurrentVersionAsync()
+    {
+        var store = new SessionStore(_appDataPath);
+
+        _ = await store.ListAsync();
+
+        await using var connection = new SqliteConnection($"Data Source={store.DatabasePath}");
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT version FROM schema_version WHERE id = 1;";
+        var result = await command.ExecuteScalarAsync();
+
+        Assert.NotNull(result);
+        Assert.Equal(1, Convert.ToInt32(result));
+    }
+
+    [Fact(DisplayName = "test_existing_database_is_backed_up_before_migration")]
+    public async Task ExistingDatabaseIsBackedUpBeforeMigrationAsync()
+    {
+        var store = new SessionStore(_appDataPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(store.DatabasePath)!);
+
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath}"))
+        {
+            await connection.OpenAsync();
+            var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY);";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        _ = await store.ListAsync();
+
+        var backupDirectory = Path.Combine(_appDataPath, "backups");
+        Assert.True(Directory.Exists(backupDirectory));
+        var backups = Directory.GetFiles(backupDirectory, "*.db", SearchOption.TopDirectoryOnly);
+        Assert.NotEmpty(backups);
+    }
+
+    [Fact(DisplayName = "test_migration_failure_reports_recovery_hint")]
+    public async Task MigrationFailureReportsRecoveryHintAsync()
+    {
+        var store = new SessionStore(_appDataPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(store.DatabasePath)!);
+        await File.WriteAllTextAsync(store.DatabasePath, "not-a-sqlite-db");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await store.ListAsync());
+
+        Assert.Contains("state.db 迁移失败", exception.Message);
+        Assert.Contains("恢复", exception.Message);
+    }
+
     public void Dispose()
     {
+        SqliteConnection.ClearAllPools();
         if (Directory.Exists(_rootPath))
         {
             Directory.Delete(_rootPath, recursive: true);

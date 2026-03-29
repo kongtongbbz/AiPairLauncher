@@ -1,3 +1,4 @@
+using System.IO;
 using AiPairLauncher.App.Models;
 using AiPairLauncher.App.ViewModels;
 using Xunit;
@@ -114,16 +115,47 @@ public sealed class MainWindowViewModelTests
 
         viewModel.ApplySessionCatalog([detachedAutoRecord], detachedAutoRecord.SessionId);
         viewModel.SelectedSessionRecord = viewModel.SessionRecords[0];
-        Assert.True(viewModel.CanStartAutomation);
-        Assert.Contains("点击“启动”", viewModel.AutomationStartHint);
+        Assert.False(viewModel.CanStartAutomation);
+        Assert.Contains("请先重连", viewModel.AutomationStartHint);
+    }
+
+    [Fact(DisplayName = "test_timeout_intervention_switches_pending_actions")]
+    public void TimeoutInterventionSwitchesPendingActions()
+    {
+        var viewModel = new MainWindowViewModel();
+
+        viewModel.ApplyAutomationState(new AutomationRunState
+        {
+            Phase = AutomationPhase.Phase3Execution,
+            Status = AutomationStageStatus.PendingUserApproval,
+            StatusDetail = "阶段 1 超时，等待人工决策",
+            PendingApproval = new ApprovalDraft
+            {
+                InterventionKind = AutomationInterventionKind.Timeout,
+                Phase = AutomationPhase.Phase3Execution,
+                StageId = 1,
+                Title = "阶段 1 超时",
+                Summary = "等待执行回报时超时",
+            },
+        });
+
+        Assert.True(viewModel.HasPendingTimeoutIntervention);
+        Assert.False(viewModel.HasPendingApprovalPlan);
+        Assert.True(viewModel.CanContinueWaitingAutomation);
+        Assert.True(viewModel.CanRetryAutomationStage);
     }
 
     private static ManagedSessionRecord CreateRecord(string workspace, string groupName, SessionHealthStatus status, bool automationEnabledAtLaunch = false)
     {
+        var workingDirectory = Path.Combine(Path.GetTempPath(), "AiPairLauncher.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(workingDirectory, ".aipair"));
+        var taskMdPath = Path.Combine(workingDirectory, ".aipair", "task.md");
+        File.WriteAllText(taskMdPath, "# Task\n\n> 状态: PENDING_PLAN\n\n## 任务清单\n");
+
         var session = new LauncherSession
         {
             Workspace = workspace,
-            WorkingDirectory = $"D:\\work\\{workspace}",
+            WorkingDirectory = workingDirectory,
             WezTermPath = "wezterm.exe",
             SocketPath = $"sock-{workspace}",
             GuiPid = 100,
@@ -154,6 +186,7 @@ public sealed class MainWindowViewModelTests
                 SessionId = session.SessionId,
                 Status = status,
                 StatusDetail = "测试状态",
+                TaskMdPath = taskMdPath,
                 LastSummary = "测试摘要",
                 LastActivityAt = DateTimeOffset.Now,
                 UpdatedAt = DateTimeOffset.Now,

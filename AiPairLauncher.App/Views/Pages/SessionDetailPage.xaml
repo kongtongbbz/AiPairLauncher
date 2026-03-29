@@ -1,6 +1,7 @@
 <UserControl x:Class="AiPairLauncher.App.Views.Pages.SessionDetailPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:AiPairLauncher.App.Controls">
     <ScrollViewer VerticalScrollBarVisibility="Auto"
                   InputMethod.IsInputMethodEnabled="False">
         <StackPanel>
@@ -159,15 +160,15 @@
                         <UniformGrid Columns="2">
                             <StackPanel Margin="0,0,10,0">
                                 <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="显示名称" />
-                                <TextBox Margin="0,6,0,0"
-                                         InputMethod.IsInputMethodEnabled="True"
-                                         Text="{Binding Core.EditableSessionDisplayName, UpdateSourceTrigger=PropertyChanged}" />
+                                <controls:SafeTextBox Margin="0,6,0,0"
+                                                      InputMethod.IsInputMethodEnabled="True"
+                                                      Text="{Binding Core.EditableSessionDisplayName, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
                             <StackPanel>
                                 <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="分组" />
-                                <TextBox Margin="0,6,0,0"
-                                         InputMethod.IsInputMethodEnabled="True"
-                                         Text="{Binding Core.EditableSessionGroupName, UpdateSourceTrigger=PropertyChanged}" />
+                                <controls:SafeTextBox Margin="0,6,0,0"
+                                                      InputMethod.IsInputMethodEnabled="True"
+                                                      Text="{Binding Core.EditableSessionGroupName, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
                         </UniformGrid>
                         <Button Margin="0,12,0,0"

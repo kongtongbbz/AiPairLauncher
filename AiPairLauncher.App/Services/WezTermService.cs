@@ -734,7 +734,7 @@ public sealed class WezTermService : IWezTermService
 
         if (!result.IsSuccess)
         {
-            throw new InvalidOperationException($"split-pane 执行失败: {result.StandardError}");
+            throw CreateCliFailureException("split-pane 执行失败", result);
         }
 
         if (!int.TryParse(result.StandardOutput.Trim(), out var paneId))
@@ -800,7 +800,7 @@ public sealed class WezTermService : IWezTermService
 
         if (!result.IsSuccess)
         {
-            throw new InvalidOperationException($"split-pane(observer) 执行失败: {result.StandardError}");
+            throw CreateCliFailureException("split-pane(observer) 执行失败", result);
         }
 
         if (!int.TryParse(result.StandardOutput.Trim(), out var paneId))
@@ -833,7 +833,7 @@ public sealed class WezTermService : IWezTermService
 
         if (!result.IsSuccess)
         {
-            throw new InvalidOperationException($"获取 pane 文本失败: {result.StandardError}");
+            throw CreateCliFailureException("获取 pane 文本失败", result);
         }
 
         return result.StandardOutput.Trim();
@@ -868,7 +868,7 @@ public sealed class WezTermService : IWezTermService
 
         if (!result.IsSuccess)
         {
-            throw new InvalidOperationException($"发送 pane 文本失败: {result.StandardError}");
+            throw CreateCliFailureException("发送 pane 文本失败", result);
         }
     }
 
@@ -893,7 +893,7 @@ public sealed class WezTermService : IWezTermService
 
         if (!result.IsSuccess)
         {
-            throw new InvalidOperationException($"读取 pane 列表失败: {result.StandardError}");
+            throw CreateCliFailureException("读取 pane 列表失败", result);
         }
 
         return ParsePanes(result.StandardOutput, workspace);
@@ -919,7 +919,7 @@ public sealed class WezTermService : IWezTermService
 
         if (!result.IsSuccess)
         {
-            throw new InvalidOperationException($"激活 pane 失败: {result.StandardError}");
+            throw CreateCliFailureException("激活 pane 失败", result);
         }
     }
 
@@ -949,6 +949,41 @@ public sealed class WezTermService : IWezTermService
                 },
             },
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Exception CreateCliFailureException(string operation, ProcessResult result)
+    {
+        var detail = string.IsNullOrWhiteSpace(result.StandardError)
+            ? result.StandardOutput
+            : result.StandardError;
+        var normalized = string.IsNullOrWhiteSpace(detail) ? "无错误详情" : detail.Trim();
+
+        if (ContainsPermissionDenied(normalized))
+        {
+            return new UnauthorizedAccessException($"{operation}: {normalized}");
+        }
+
+        if (ContainsTimeoutHint(normalized))
+        {
+            return new TimeoutException($"{operation}: {normalized}");
+        }
+
+        return new InvalidOperationException($"{operation}: {normalized}");
+    }
+
+    private static bool ContainsPermissionDenied(string text)
+    {
+        return text.Contains("access is denied", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("permission denied", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("拒绝访问", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("权限", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsTimeoutHint(string text)
+    {
+        return text.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("timed out", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("超时", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<PaneInfo> ParsePanes(string json, string workspace)
@@ -1242,7 +1277,7 @@ public sealed class WezTermService : IWezTermService
 
         if (!result.IsSuccess)
         {
-            throw new InvalidOperationException($"读取 pane 列表失败: {result.StandardError}");
+            throw CreateCliFailureException("读取 pane 列表失败", result);
         }
 
         return ParsePanes(result.StandardOutput);

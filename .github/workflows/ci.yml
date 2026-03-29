@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - chore/**
+      - fix/**
+      - feat/**
+      - refactor/**
+      - test/**
+      - ci/**
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore .\AiPairLauncher.sln
+
+      - name: Build
+        shell: pwsh
+        run: dotnet build .\AiPairLauncher.sln --configuration Release --no-restore
+
+      - name: Test
+        shell: pwsh
+        run: dotnet test .\AiPairLauncher.sln --configuration Release --no-build

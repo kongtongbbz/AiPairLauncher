@@ -1,6 +1,7 @@
 <UserControl x:Class="AiPairLauncher.App.Views.Pages.DashboardPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:AiPairLauncher.App.Controls">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <Grid>
             <Grid.RowDefinitions>
@@ -109,8 +110,8 @@
                     <StackPanel Grid.Row="1"
                                 Margin="0,14,0,12">
                         <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="搜索" />
-                        <TextBox Margin="0,6,0,0"
-                                 Text="{Binding Core.SessionSearchText, UpdateSourceTrigger=PropertyChanged}" />
+                        <controls:SafeTextBox Margin="0,6,0,0"
+                                              Text="{Binding Core.SessionSearchText, UpdateSourceTrigger=PropertyChanged}" />
 
                         <UniformGrid Margin="0,12,0,0"
                                      Columns="2">
@@ -240,20 +241,20 @@
                                     Content="浏览"
                                     Click="BrowseWorkingDirectory_Click"
                                     IsEnabled="{Binding Core.CanStart}" />
-                            <TextBox Text="{Binding Core.WorkingDirectory, UpdateSourceTrigger=PropertyChanged}" />
+                            <controls:SafeTextBox Text="{Binding Core.WorkingDirectory, UpdateSourceTrigger=PropertyChanged}" />
                         </DockPanel>
 
                         <TextBlock Margin="0,12,0,0"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    Text="工作区名称" />
-                        <TextBox Margin="0,6,0,0"
-                                 Text="{Binding Core.WorkspaceName, UpdateSourceTrigger=PropertyChanged}" />
+                        <controls:SafeTextBox Margin="0,6,0,0"
+                                              Text="{Binding Core.WorkspaceName, UpdateSourceTrigger=PropertyChanged}" />
 
                         <TextBlock Margin="0,12,0,0"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    Text="默认分组" />
-                        <TextBox Margin="0,6,0,0"
-                                 Text="{Binding Core.SessionGroupName, UpdateSourceTrigger=PropertyChanged}" />
+                        <controls:SafeTextBox Margin="0,6,0,0"
+                                              Text="{Binding Core.SessionGroupName, UpdateSourceTrigger=PropertyChanged}" />
 
                         <TextBlock Margin="0,12,0,0"
                                    Foreground="{DynamicResource TextSecondaryBrush}"

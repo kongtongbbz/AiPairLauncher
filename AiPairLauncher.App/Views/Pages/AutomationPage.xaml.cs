@@ -16,6 +16,10 @@ public partial class AutomationPage : System.Windows.Controls.UserControl
 
     private void ApprovePlan_Click(object sender, RoutedEventArgs e) => ResolveHost()?.ApprovePlan_Click(sender, e);
 
+    private void ContinueAutomationWait_Click(object sender, RoutedEventArgs e) => ResolveHost()?.ContinueAutomationWait_Click(sender, e);
+
+    private void RetryAutomationStage_Click(object sender, RoutedEventArgs e) => ResolveHost()?.RetryAutomationStage_Click(sender, e);
+
     private void RejectPlan_Click(object sender, RoutedEventArgs e) => ResolveHost()?.RejectPlan_Click(sender, e);
 
     private MainWindow? ResolveHost()

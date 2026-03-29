@@ -26,6 +26,8 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
     private int _currentPollingRound;
     private bool _isFirstStageManualGateSatisfied;
     private bool _forceManualApprovalForNextStagePlan;
+    private ApprovalDraft? _activeExecutionDraft;
+    private AgentPacket? _lastExecutionReportPacket;
 
     public AutoCollaborationCoordinator(IWezTermService wezTermService, IAgentPacketParser packetParser)
     {
@@ -69,6 +71,8 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             _currentPollingRound = 0;
             _isFirstStageManualGateSatisfied = false;
             _forceManualApprovalForNextStagePlan = false;
+            _activeExecutionDraft = null;
+            _lastExecutionReportPacket = null;
             _loopCts = new CancellationTokenSource();
             var loopToken = _loopCts.Token;
 
@@ -137,6 +141,10 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             _isFirstStageManualGateSatisfied = settings.AdvancePolicy != AutomationAdvancePolicy.ManualFirstStageThenAuto
                 || state.AutoAdvanceEnabled;
             _forceManualApprovalForNextStagePlan = false;
+            _activeExecutionDraft = state.PendingApproval is { InterventionKind: AutomationInterventionKind.Timeout }
+                ? state.PendingApproval
+                : null;
+            _lastExecutionReportPacket = null;
             _loopCts = new CancellationTokenSource();
             var loopToken = _loopCts.Token;
 
@@ -254,6 +262,61 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
                 taskMdPath: ResolveTaskMdPath(_state.PendingApproval),
                 taskMdStatus: _state.PendingApproval.TaskMdStatus,
                 currentTaskRef: _state.PendingApproval.TaskRef);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task ContinueWaitingAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureSession();
+
+            if (_state.Status != AutomationStageStatus.PendingUserApproval ||
+                _state.PendingApproval is not { InterventionKind: AutomationInterventionKind.Timeout } draft)
+            {
+                throw new InvalidOperationException("当前没有可继续等待的超时阶段。");
+            }
+
+            var resumePhase = draft.ResumePhase ?? draft.Phase;
+            var resumeStatus = draft.ResumeStatus ?? AutomationStageStatus.WaitingForClaudePlan;
+            _lastProgressAt = DateTimeOffset.Now;
+            UpdateState(
+                phase: resumePhase,
+                status: resumeStatus,
+                currentStageId: draft.StageId,
+                statusDetail: string.IsNullOrWhiteSpace(draft.ResumeStatusDetail)
+                    ? $"已恢复阶段 {draft.StageId} 等待"
+                    : draft.ResumeStatusDetail,
+                lastPacketSummary: $"用户选择继续等待阶段 {draft.StageId}",
+                currentTaskRef: draft.TaskRef,
+                taskMdPath: ResolveTaskMdPath(draft),
+                taskMdStatus: draft.TaskMdStatus);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task RetryCurrentStageAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureSession();
+
+            if (_state.Status != AutomationStageStatus.PendingUserApproval ||
+                _state.PendingApproval is not { InterventionKind: AutomationInterventionKind.Timeout } draft)
+            {
+                throw new InvalidOperationException("当前没有可重试的超时阶段。");
+            }
+
+            await RetrySuspendedStageAsync(draft, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -413,7 +476,10 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             throw new InvalidOperationException(primaryParseError);
         }
 
-        EnsureNotTimedOut(hasPaneProgress);
+        if (TryEnterTimeoutIntervention(hasPaneProgress))
+        {
+            return;
+        }
     }
 
     private async Task ProcessStagePlanAsync(AgentPacket packet, CancellationToken cancellationToken)
@@ -454,6 +520,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
 
     private async Task ProcessExecutionReportAsync(AgentPacket packet, CancellationToken cancellationToken)
     {
+        _lastExecutionReportPacket = packet;
         var reviewExecutor = packet.Phase == AutomationPhase.None
             ? AgentRole.Claude
             : ResolveReviewExecutor(AutomationPhase.Phase3Execution);
@@ -988,20 +1055,25 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         return count;
     }
 
-    private void EnsureNotTimedOut(bool hasPaneProgress = false)
+    private bool TryEnterTimeoutIntervention(bool hasPaneProgress = false)
     {
         if (hasPaneProgress)
         {
-            return;
+            return false;
         }
 
         var timeout = TimeSpan.FromSeconds(_settings.NoProgressTimeoutSeconds);
         if (DateTimeOffset.Now - _lastProgressAt <= timeout)
         {
-            return;
+            return false;
         }
 
-        throw new TimeoutException($"超过 {timeout.TotalSeconds:0} 秒未收到新的结构化输出。");
+        var draft = BuildTimeoutInterventionDraft(timeout);
+        EnterPendingApproval(
+            draft,
+            $"阶段 {draft.StageId} 超过 {timeout.TotalSeconds:0} 秒未收到新的结构化输出。",
+            $"当前阶段超过 {timeout.TotalSeconds:0} 秒未收到新的结构化输出。");
+        return true;
     }
 
     private async Task PauseOnErrorAsync(string message, CancellationToken cancellationToken)
@@ -1070,7 +1142,9 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
     {
         var draftPhase = draft.Phase == AutomationPhase.None ? _state.Phase : draft.Phase;
         var executorLabel = ResolveExecutorLabel(ResolvePhaseExecutor(draftPhase));
-        var statusDetail = draft.SourceKind switch
+        var statusDetail = draft.InterventionKind == AutomationInterventionKind.Timeout
+            ? $"阶段 {draft.StageId} 超时，等待人工决策"
+            : draft.SourceKind switch
         {
             PacketKind.StagePlan => $"收到 {executorLabel} 的阶段 {draft.StageId} 计划，等待人工接管",
             PacketKind.ReviewDecision => $"收到 {executorLabel} 的{GetDecisionText(draft.ReviewDecision)}，等待人工接管",
@@ -1205,6 +1279,50 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         StateChanged?.Invoke(this, _state);
     }
 
+    private ApprovalDraft BuildTimeoutInterventionDraft(TimeSpan timeout)
+    {
+        var phase = _state.Phase == AutomationPhase.None ? AutomationPhase.Phase1Research : _state.Phase;
+        var stageId = _state.CurrentStageId ?? 1;
+        var actionSummary = _state.Status switch
+        {
+            AutomationStageStatus.WaitingForClaudePlan => "等待阶段计划",
+            AutomationStageStatus.WaitingForCodexReport => "等待执行回报",
+            AutomationStageStatus.WaitingForClaudeReview => "等待复核结论",
+            _ => "等待阶段结果",
+        };
+
+        return new ApprovalDraft
+        {
+            InterventionKind = AutomationInterventionKind.Timeout,
+            Phase = phase,
+            StageId = stageId,
+            TaskRef = _state.CurrentTaskRef,
+            SourceKind = PacketKind.ReviewDecision,
+            TaskMdPath = _state.TaskMdPath,
+            TaskMdStatus = _state.TaskMdStatus,
+            ResumePhase = phase,
+            ResumeStatus = _state.Status,
+            ResumeStatusDetail = _state.StatusDetail,
+            Title = $"阶段 {stageId} 超时",
+            Summary = $"当前阶段已超过 {timeout.TotalSeconds:0} 秒没有新的结构化输出。",
+            Scope = $"{actionSummary}时发生超时，需要人工选择后续动作。",
+            Steps =
+            [
+                "继续等待：保留当前等待状态并重置超时计时器。",
+                "重试本阶段：重新发送当前阶段指令。",
+                "终止编排：停止当前自动编排并保留快照。",
+            ],
+            AcceptanceCriteria =
+            [
+                "人工动作生效后状态栏和阶段卡片同步更新。",
+                "继续等待不会直接终止当前编排。",
+                "重试本阶段会重新发送当前阶段指令。",
+            ],
+            ExecutorBrief = _activeExecutionDraft?.ExecutorBrief ?? string.Empty,
+            SourcePacketRaw = _lastExecutionReportPacket?.RawText,
+        };
+    }
+
     private static bool IsPollingStatus(AutomationStageStatus status)
     {
         return status is AutomationStageStatus.WaitingForClaudePlan
@@ -1332,12 +1450,15 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         AgentRole executor,
         string? userNote,
         bool isAutomatic,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? actionTextOverride = null)
     {
         var prompt = AutomationPromptFactory.BuildExecutionPrompt(executor, draft, userNote);
         await _wezTermService
             .SendAutomationPromptAsync(_session!, executor, prompt, _settings.SubmitOnSend, cancellationToken)
             .ConfigureAwait(false);
+
+        _activeExecutionDraft = draft;
 
         if (isAutomatic)
         {
@@ -1345,7 +1466,7 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
         }
 
         _lastProgressAt = DateTimeOffset.Now;
-        var actionText = isAutomatic ? "已自动发送" : "已批准并发送";
+        var actionText = actionTextOverride ?? (isAutomatic ? "已自动发送" : "已批准并发送");
         UpdateState(
             phase: draft.Phase,
             status: AutomationStageStatus.WaitingForCodexReport,
@@ -1355,6 +1476,192 @@ public sealed class AutoCollaborationCoordinator : IAutoCollaborationCoordinator
             currentTaskRef: draft.TaskRef,
             taskMdPath: ResolveTaskMdPath(draft),
             taskMdStatus: draft.TaskMdStatus);
+    }
+
+    private async Task RetrySuspendedStageAsync(ApprovalDraft draft, CancellationToken cancellationToken)
+    {
+        var resumePhase = draft.ResumePhase ?? draft.Phase;
+        var resumeStatus = draft.ResumeStatus ?? AutomationStageStatus.WaitingForClaudePlan;
+        var taskMdPath = ResolveTaskMdPath(draft);
+
+        switch (resumeStatus)
+        {
+            case AutomationStageStatus.WaitingForClaudePlan:
+                await RetryPhasePlanAsync(resumePhase, draft.StageId, taskMdPath, cancellationToken).ConfigureAwait(false);
+                return;
+            case AutomationStageStatus.WaitingForCodexReport:
+                await DispatchToExecutorAsync(
+                    BuildRetryExecutionDraft(draft, resumePhase),
+                    ResolveExecutionExecutor(resumePhase),
+                    userNote: "当前阶段超时，已触发手动重试。",
+                    isAutomatic: false,
+                    cancellationToken: cancellationToken,
+                    actionTextOverride: "已手动重试并发送").ConfigureAwait(false);
+                return;
+            case AutomationStageStatus.WaitingForClaudeReview:
+                if (resumePhase == AutomationPhase.Phase4Review)
+                {
+                    var phase4Executor = ResolveReviewExecutor(AutomationPhase.Phase4Review);
+                    var prompt = AutomationPromptFactory.BuildPhase4ReviewPrompt(
+                        phase4Executor,
+                        _settings.InitialTaskPrompt,
+                        taskMdPath);
+                    await SendPhaseReviewRetryPromptAsync(
+                        phase4Executor,
+                        prompt,
+                        AutomationPhase.Phase4Review,
+                        draft.StageId,
+                        $"{ResolveExecutorLabel(phase4Executor)} 已重新接收 Phase 4 复核请求",
+                        cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(draft.SourcePacketRaw))
+                {
+                    var reviewPacket = ParseStoredPacket(draft.SourcePacketRaw);
+                    var reviewExecutor = ResolveReviewExecutor(AutomationPhase.Phase3Execution);
+                    var prompt = AutomationPromptFactory.BuildReviewPrompt(reviewExecutor, reviewPacket, _settings.InitialTaskPrompt);
+                    await SendPhaseReviewRetryPromptAsync(
+                        reviewExecutor,
+                        prompt,
+                        AutomationPhase.Phase3Execution,
+                        draft.StageId,
+                        $"{ResolveExecutorLabel(reviewExecutor)} 已重新接收阶段 {draft.StageId} 复核请求",
+                        cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                await DispatchToExecutorAsync(
+                    BuildRetryExecutionDraft(draft, resumePhase),
+                    ResolveExecutionExecutor(resumePhase),
+                    userNote: "当前阶段在复核前超时，已触发手动重试执行。",
+                    isAutomatic: false,
+                    cancellationToken: cancellationToken,
+                    actionTextOverride: "已手动重试并发送").ConfigureAwait(false);
+                return;
+            default:
+                throw new InvalidOperationException("当前超时状态不支持重试。");
+        }
+    }
+
+    private async Task RetryPhasePlanAsync(
+        AutomationPhase phase,
+        int stageId,
+        string taskMdPath,
+        CancellationToken cancellationToken)
+    {
+        AgentRole executor;
+        string prompt;
+        string statusDetail;
+
+        switch (phase)
+        {
+            case AutomationPhase.Phase1Research:
+                executor = ResolvePhaseExecutor(AutomationPhase.Phase1Research);
+                prompt = AutomationPromptFactory.BuildBootstrapPrompt(
+                    executor,
+                    _session!.WorkingDirectory,
+                    _settings.InitialTaskPrompt,
+                    taskMdPath);
+                statusDetail = $"已重新请求 {ResolveExecutorLabel(executor)} 输出 Phase 1 调研计划";
+                break;
+            case AutomationPhase.Phase2Planning:
+                executor = ResolvePhaseExecutor(AutomationPhase.Phase2Planning);
+                prompt = AutomationPromptFactory.BuildPhase2PlanningPrompt(
+                    executor,
+                    _session!.WorkingDirectory,
+                    _settings.InitialTaskPrompt,
+                    taskMdPath);
+                statusDetail = $"已重新请求 {ResolveExecutorLabel(executor)} 输出 Phase 2 规划";
+                break;
+            default:
+                executor = ResolvePhaseExecutor(AutomationPhase.Phase3Execution);
+                prompt = AutomationPromptFactory.BuildPhase3KickoffPrompt(
+                    executor,
+                    _session!.WorkingDirectory,
+                    _settings.InitialTaskPrompt,
+                    taskMdPath);
+                statusDetail = $"已重新请求 {ResolveExecutorLabel(executor)} 输出 Phase 3 首个执行计划";
+                break;
+        }
+
+        await _wezTermService
+            .SendAutomationPromptAsync(_session!, executor, prompt, _settings.SubmitOnSend, cancellationToken)
+            .ConfigureAwait(false);
+
+        _lastProgressAt = DateTimeOffset.Now;
+        UpdateState(
+            phase: phase,
+            status: AutomationStageStatus.WaitingForClaudePlan,
+            currentStageId: phase == AutomationPhase.Phase3Execution ? null : stageId,
+            statusDetail: statusDetail,
+            lastPacketSummary: $"已手动重试阶段 {stageId} 计划",
+            taskMdPath: taskMdPath,
+            taskMdStatus: _state.TaskMdStatus,
+            currentTaskRef: _state.CurrentTaskRef);
+    }
+
+    private ApprovalDraft BuildRetryExecutionDraft(ApprovalDraft draft, AutomationPhase phase)
+    {
+        return new ApprovalDraft
+        {
+            Phase = phase,
+            StageId = draft.StageId,
+            TaskRef = draft.TaskRef,
+            ParallelGroup = draft.ParallelGroup,
+            Subagent = draft.Subagent,
+            RetryCount = draft.RetryCount,
+            SourceKind = draft.SourceKind,
+            ReviewDecision = draft.ReviewDecision,
+            TaskMdPath = ResolveTaskMdPath(draft),
+            TaskMdStatus = draft.TaskMdStatus,
+            Title = string.IsNullOrWhiteSpace(draft.Title) ? $"阶段 {draft.StageId} 重试" : draft.Title,
+            Summary = string.IsNullOrWhiteSpace(draft.Summary) ? $"阶段 {draft.StageId} 手动重试" : draft.Summary,
+            Scope = draft.Scope,
+            Steps = draft.Steps,
+            AcceptanceCriteria = draft.AcceptanceCriteria,
+            TaskProgress = draft.TaskProgress,
+            ExecutorBrief = string.IsNullOrWhiteSpace(draft.ExecutorBrief)
+                ? "请重新执行当前阶段并补充验证结果。"
+                : draft.ExecutorBrief,
+            SourcePacketRaw = draft.SourcePacketRaw,
+        };
+    }
+
+    private async Task SendPhaseReviewRetryPromptAsync(
+        AgentRole executor,
+        string prompt,
+        AutomationPhase phase,
+        int stageId,
+        string statusDetail,
+        CancellationToken cancellationToken)
+    {
+        await _wezTermService
+            .SendAutomationPromptAsync(_session!, executor, prompt, _settings.SubmitOnSend, cancellationToken)
+            .ConfigureAwait(false);
+
+        _lastProgressAt = DateTimeOffset.Now;
+        UpdateState(
+            phase: phase,
+            status: AutomationStageStatus.WaitingForClaudeReview,
+            currentStageId: stageId,
+            statusDetail: statusDetail,
+            lastPacketSummary: $"已手动重试阶段 {stageId} 复核",
+            currentTaskRef: _state.CurrentTaskRef,
+            taskMdPath: _state.TaskMdPath,
+            taskMdStatus: _state.TaskMdStatus);
+    }
+
+    private AgentPacket ParseStoredPacket(string rawPacket)
+    {
+        var decoratedPacket = $"{PacketStartMarker}{Environment.NewLine}{rawPacket}{Environment.NewLine}{PacketEndMarker}";
+        var parseOutcome = _packetParser.ParseLatest(decoratedPacket);
+        if (parseOutcome.Status != PacketParseStatus.Success || parseOutcome.Packet is null)
+        {
+            throw new InvalidOperationException("无法恢复超时前的结构化数据包。");
+        }
+
+        return parseOutcome.Packet;
     }
 
     private string BuildTaskMdPath(LauncherSession session)

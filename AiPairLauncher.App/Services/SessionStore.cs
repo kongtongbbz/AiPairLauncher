@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
@@ -10,6 +11,7 @@ namespace AiPairLauncher.App.Services;
 public sealed class SessionStore : ISessionStore
 {
     private const string SelectedSessionKey = "selected_session_id";
+    private const int CurrentSchemaVersion = 1;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -701,8 +703,134 @@ public sealed class SessionStore : ISessionStore
 
         Directory.CreateDirectory(directory);
 
+        string? backupPath = null;
+        try
+        {
+            int currentVersion;
+            try
+            {
+                currentVersion = await DetectSchemaVersionAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception detectEx) when (File.Exists(DatabasePath))
+            {
+                backupPath = await BackupDatabaseAsync(directory, -1, cancellationToken).ConfigureAwait(false);
+                throw new InvalidOperationException("无法检测现有 state.db 版本，已先创建备份文件以便恢复。", detectEx);
+            }
+
+            if (currentVersion < CurrentSchemaVersion && File.Exists(DatabasePath))
+            {
+                backupPath = await BackupDatabaseAsync(directory, currentVersion, cancellationToken).ConfigureAwait(false);
+            }
+
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureSchemaVersionTableAsync(connection, cancellationToken).ConfigureAwait(false);
+
+            var version = await ReadSchemaVersionAsync(connection, cancellationToken).ConfigureAwait(false);
+            if (version > CurrentSchemaVersion)
+            {
+                throw new InvalidOperationException($"当前数据库版本 {version} 高于应用支持版本 {CurrentSchemaVersion}。");
+            }
+
+            while (version < CurrentSchemaVersion)
+            {
+                var nextVersion = version + 1;
+                await ApplyMigrationAsync(connection, nextVersion, cancellationToken).ConfigureAwait(false);
+                await UpdateSchemaVersionAsync(connection, nextVersion, cancellationToken).ConfigureAwait(false);
+                version = nextVersion;
+            }
+        }
+        catch (Exception ex)
+        {
+            var backupHint = string.IsNullOrWhiteSpace(backupPath)
+                ? "当前无可用自动备份文件，无法自动恢复。"
+                : $"可使用备份文件恢复：{backupPath}";
+            throw new InvalidOperationException($"state.db 迁移失败。{backupHint} 原始错误: {ex.Message}", ex);
+        }
+    }
+
+    private async Task<int> DetectSchemaVersionAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(DatabasePath))
+        {
+            return 0;
+        }
+
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        var tableExistsCommand = connection.CreateCommand();
+        tableExistsCommand.CommandText =
+            """
+            SELECT COUNT(1)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'schema_version';
+            """;
+        var tableExists = Convert.ToInt32(await tableExistsCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture) > 0;
+        if (!tableExists)
+        {
+            return 0;
+        }
+
+        return await ReadSchemaVersionAsync(connection, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task EnsureSchemaVersionTableAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            CREATE TABLE IF NOT EXISTS schema_version (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            INSERT INTO schema_version (id, version, updated_at)
+            VALUES (1, 0, $updated_at)
+            ON CONFLICT(id) DO NOTHING;
+            """;
+        AddParameter(command, "$updated_at", ToDbString(DateTimeOffset.Now));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<int> ReadSchemaVersionAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT version FROM schema_version WHERE id = 1;";
+        var result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return result is null or DBNull ? 0 : Convert.ToInt32(result, CultureInfo.InvariantCulture);
+    }
+
+    private static async Task UpdateSchemaVersionAsync(SqliteConnection connection, int version, CancellationToken cancellationToken)
+    {
+        var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            UPDATE schema_version
+            SET version = $version,
+                updated_at = $updated_at
+            WHERE id = 1;
+            """;
+        AddParameter(command, "$version", version);
+        AddParameter(command, "$updated_at", ToDbString(DateTimeOffset.Now));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task ApplyMigrationAsync(SqliteConnection connection, int version, CancellationToken cancellationToken)
+    {
+        switch (version)
+        {
+            case 1:
+                await ApplyMigrationV1Async(connection, cancellationToken).ConfigureAwait(false);
+                return;
+            default:
+                throw new InvalidOperationException($"未知迁移版本: {version}");
+        }
+    }
+
+    private async Task ApplyMigrationV1Async(SqliteConnection connection, CancellationToken cancellationToken)
+    {
         var command = connection.CreateCommand();
         command.CommandText =
             """
@@ -760,6 +888,12 @@ public sealed class SessionStore : ISessionStore
                 task_md_path TEXT NULL,
                 task_md_status TEXT NOT NULL DEFAULT 'Unknown',
                 automation_retry_count INTEGER NOT NULL,
+                disconnect_reason TEXT NOT NULL DEFAULT 'None',
+                disconnected_at TEXT NULL,
+                current_backoff_seconds INTEGER NOT NULL DEFAULT 8,
+                next_health_probe_at TEXT NULL,
+                zombie_detected INTEGER NOT NULL DEFAULT 0,
+                recovery_hint TEXT NOT NULL DEFAULT '会话在线，无需恢复操作。',
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
             );
@@ -851,12 +985,20 @@ public sealed class SessionStore : ISessionStore
             );
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+        // 兼容旧库补列，保留为迁移细节，不作为主版本策略。
         await EnsureColumnAsync(connection, "session_status_snapshots", "claude_preview", "TEXT NOT NULL DEFAULT '暂无输出'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "session_status_snapshots", "codex_preview", "TEXT NOT NULL DEFAULT '暂无输出'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "session_status_snapshots", "automation_phase", "TEXT NOT NULL DEFAULT 'None'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "session_status_snapshots", "automation_task_ref", "TEXT NULL", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "session_status_snapshots", "task_md_path", "TEXT NULL", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "session_status_snapshots", "task_md_status", "TEXT NOT NULL DEFAULT 'Unknown'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "disconnect_reason", "TEXT NOT NULL DEFAULT 'None'", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "disconnected_at", "TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "current_backoff_seconds", "INTEGER NOT NULL DEFAULT 8", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "next_health_probe_at", "TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "zombie_detected", "INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+        await EnsureColumnAsync(connection, "session_status_snapshots", "recovery_hint", "TEXT NOT NULL DEFAULT '会话在线，无需恢复操作。'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "automation_events", "phase", "TEXT NOT NULL DEFAULT 'None'", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "automation_events", "task_ref", "TEXT NULL", cancellationToken).ConfigureAwait(false);
         await EnsureColumnAsync(connection, "automation_events", "task_md_path", "TEXT NULL", cancellationToken).ConfigureAwait(false);
@@ -876,6 +1018,36 @@ public sealed class SessionStore : ISessionStore
         await EnsureColumnAsync(connection, "launch_profiles", "automation_template_key", "TEXT NOT NULL DEFAULT 'feature'", cancellationToken).ConfigureAwait(false);
         await EnsureDefaultLaunchProfilesAsync(connection, cancellationToken).ConfigureAwait(false);
         await ImportLegacySessionIfNeededAsync(connection, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> BackupDatabaseAsync(string directory, int sourceVersion, CancellationToken cancellationToken)
+    {
+        var backupDirectory = Path.Combine(directory, "backups");
+        Directory.CreateDirectory(backupDirectory);
+        var backupPath = Path.Combine(
+            backupDirectory,
+            sourceVersion >= 0
+                ? $"state.v{sourceVersion}-backup-{DateTime.Now:yyyyMMdd-HHmmss-fff}.db"
+                : $"state.unknown-backup-{DateTime.Now:yyyyMMdd-HHmmss-fff}.db");
+
+        await using var source = new FileStream(
+            DatabasePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 81920,
+            useAsync: true);
+        await using var target = new FileStream(
+            backupPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 81920,
+            useAsync: true);
+        await source.CopyToAsync(target, cancellationToken).ConfigureAwait(false);
+        await target.FlushAsync(cancellationToken).ConfigureAwait(false);
+        Trace.WriteLine($"[SessionStore] state.db migration backup created: {backupPath}");
+        return backupPath;
     }
 
     private async Task EnsureDefaultLaunchProfilesAsync(SqliteConnection connection, CancellationToken cancellationToken)
@@ -962,7 +1134,8 @@ public sealed class SessionStore : ISessionStore
                 r.codex_observer_pane_id, r.is_alive, r.updated_at,
                 p.status, p.status_detail, p.last_activity_at, p.last_error, p.last_summary,
                 p.claude_preview, p.codex_preview,
-                p.needs_approval, p.automation_phase, p.automation_stage_id, p.automation_task_ref, p.task_md_path, p.task_md_status, p.automation_retry_count, p.updated_at
+                p.needs_approval, p.automation_phase, p.automation_stage_id, p.automation_task_ref, p.task_md_path, p.task_md_status, p.automation_retry_count,
+                p.disconnect_reason, p.disconnected_at, p.current_backoff_seconds, p.next_health_probe_at, p.zombie_detected, p.recovery_hint, p.updated_at
             FROM sessions s
             LEFT JOIN session_runtime_bindings r ON r.session_id = s.session_id
             LEFT JOIN session_status_snapshots p ON p.session_id = s.session_id
@@ -1001,7 +1174,8 @@ public sealed class SessionStore : ISessionStore
                 r.codex_observer_pane_id, r.is_alive, r.updated_at,
                 p.status, p.status_detail, p.last_activity_at, p.last_error, p.last_summary,
                 p.claude_preview, p.codex_preview,
-                p.needs_approval, p.automation_phase, p.automation_stage_id, p.automation_task_ref, p.task_md_path, p.task_md_status, p.automation_retry_count, p.updated_at
+                p.needs_approval, p.automation_phase, p.automation_stage_id, p.automation_task_ref, p.task_md_path, p.task_md_status, p.automation_retry_count,
+                p.disconnect_reason, p.disconnected_at, p.current_backoff_seconds, p.next_health_probe_at, p.zombie_detected, p.recovery_hint, p.updated_at
             FROM sessions s
             LEFT JOIN session_runtime_bindings r ON r.session_id = s.session_id
             LEFT JOIN session_status_snapshots p ON p.session_id = s.session_id
@@ -1146,11 +1320,13 @@ public sealed class SessionStore : ISessionStore
             """
             INSERT INTO session_status_snapshots (
                 session_id, status, status_detail, last_activity_at, last_error,
-                last_summary, claude_preview, codex_preview, needs_approval, automation_phase, automation_stage_id, automation_task_ref, task_md_path, task_md_status, automation_retry_count, updated_at
+                last_summary, claude_preview, codex_preview, needs_approval, automation_phase, automation_stage_id, automation_task_ref, task_md_path, task_md_status, automation_retry_count,
+                disconnect_reason, disconnected_at, current_backoff_seconds, next_health_probe_at, zombie_detected, recovery_hint, updated_at
             )
             VALUES (
                 $session_id, $status, $status_detail, $last_activity_at, $last_error,
-                $last_summary, $claude_preview, $codex_preview, $needs_approval, $automation_phase, $automation_stage_id, $automation_task_ref, $task_md_path, $task_md_status, $automation_retry_count, $updated_at
+                $last_summary, $claude_preview, $codex_preview, $needs_approval, $automation_phase, $automation_stage_id, $automation_task_ref, $task_md_path, $task_md_status, $automation_retry_count,
+                $disconnect_reason, $disconnected_at, $current_backoff_seconds, $next_health_probe_at, $zombie_detected, $recovery_hint, $updated_at
             )
             ON CONFLICT(session_id) DO UPDATE SET
                 status = excluded.status,
@@ -1167,6 +1343,12 @@ public sealed class SessionStore : ISessionStore
                 task_md_path = excluded.task_md_path,
                 task_md_status = excluded.task_md_status,
                 automation_retry_count = excluded.automation_retry_count,
+                disconnect_reason = excluded.disconnect_reason,
+                disconnected_at = excluded.disconnected_at,
+                current_backoff_seconds = excluded.current_backoff_seconds,
+                next_health_probe_at = excluded.next_health_probe_at,
+                zombie_detected = excluded.zombie_detected,
+                recovery_hint = excluded.recovery_hint,
                 updated_at = excluded.updated_at;
             """;
         AddParameter(snapshotCommand, "$session_id", record.SessionId);
@@ -1184,6 +1366,12 @@ public sealed class SessionStore : ISessionStore
         AddParameter(snapshotCommand, "$task_md_path", record.StatusSnapshot.TaskMdPath);
         AddParameter(snapshotCommand, "$task_md_status", record.StatusSnapshot.TaskMdStatus.ToString());
         AddParameter(snapshotCommand, "$automation_retry_count", record.StatusSnapshot.AutomationRetryCount);
+        AddParameter(snapshotCommand, "$disconnect_reason", record.StatusSnapshot.DisconnectReason.ToString());
+        AddParameter(snapshotCommand, "$disconnected_at", record.StatusSnapshot.DisconnectedAt.HasValue ? ToDbString(record.StatusSnapshot.DisconnectedAt.Value) : null);
+        AddParameter(snapshotCommand, "$current_backoff_seconds", Math.Max(8, record.StatusSnapshot.CurrentBackoffSeconds));
+        AddParameter(snapshotCommand, "$next_health_probe_at", record.StatusSnapshot.NextHealthProbeAt.HasValue ? ToDbString(record.StatusSnapshot.NextHealthProbeAt.Value) : null);
+        AddParameter(snapshotCommand, "$zombie_detected", record.StatusSnapshot.ZombieDetected);
+        AddParameter(snapshotCommand, "$recovery_hint", string.IsNullOrWhiteSpace(record.StatusSnapshot.RecoveryHint) ? "会话在线，无需恢复操作。" : record.StatusSnapshot.RecoveryHint);
         AddParameter(snapshotCommand, "$updated_at", ToDbString(record.UpdatedAt == default ? DateTimeOffset.Now : record.UpdatedAt));
         await snapshotCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -1277,7 +1465,13 @@ public sealed class SessionStore : ISessionStore
                 TaskMdPath = ReadNullableString(reader, 41),
                 TaskMdStatus = ParseTaskMdStatus(ReadNullableString(reader, 42)),
                 AutomationRetryCount = ReadNullableInt(reader, 43) ?? 0,
-                UpdatedAt = ParseDbDateTime(ReadNullableString(reader, 44) ?? reader.GetString(21)),
+                DisconnectReason = ParseDisconnectReason(ReadNullableString(reader, 44)),
+                DisconnectedAt = ParseNullableDbDateTime(ReadNullableString(reader, 45)),
+                CurrentBackoffSeconds = ReadNullableInt(reader, 46) ?? 8,
+                NextHealthProbeAt = ParseNullableDbDateTime(ReadNullableString(reader, 47)),
+                ZombieDetected = ReadNullableBool(reader, 48) ?? false,
+                RecoveryHint = ReadNullableString(reader, 49) ?? "会话在线，无需恢复操作。",
+                UpdatedAt = ParseDbDateTime(ReadNullableString(reader, 50) ?? reader.GetString(21)),
             },
         };
     }
@@ -1426,6 +1620,16 @@ public sealed class SessionStore : ISessionStore
         return DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
     }
 
+    private static DateTimeOffset? ParseNullableDbDateTime(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return ParseDbDateTime(value);
+    }
+
     private async Task SaveLegacySessionAsync(LauncherSession session, CancellationToken cancellationToken)
     {
         var directory = Path.GetDirectoryName(LegacySessionFilePath);
@@ -1462,6 +1666,13 @@ public sealed class SessionStore : ISessionStore
         return Enum.TryParse<TaskMdStatus>(value, ignoreCase: true, out var status)
             ? status
             : TaskMdStatus.Unknown;
+    }
+
+    private static SessionDisconnectReason ParseDisconnectReason(string? value)
+    {
+        return Enum.TryParse<SessionDisconnectReason>(value, ignoreCase: true, out var reason)
+            ? reason
+            : SessionDisconnectReason.None;
     }
 
     private static AgentRole ParseAgentRole(string? value, AgentRole fallback)

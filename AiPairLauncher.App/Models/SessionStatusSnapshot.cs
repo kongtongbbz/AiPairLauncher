@@ -32,6 +32,18 @@ public sealed class SessionStatusSnapshot
 
     public int AutomationRetryCount { get; set; }
 
+    public SessionDisconnectReason DisconnectReason { get; set; } = SessionDisconnectReason.None;
+
+    public DateTimeOffset? DisconnectedAt { get; set; }
+
+    public int CurrentBackoffSeconds { get; set; } = 8;
+
+    public DateTimeOffset? NextHealthProbeAt { get; set; }
+
+    public bool ZombieDetected { get; set; }
+
+    public string RecoveryHint { get; set; } = "会话在线，无需恢复操作。";
+
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
 
     public SessionStatusSnapshot Clone()
@@ -53,6 +65,12 @@ public sealed class SessionStatusSnapshot
             TaskMdPath = TaskMdPath,
             TaskMdStatus = TaskMdStatus,
             AutomationRetryCount = AutomationRetryCount,
+            DisconnectReason = DisconnectReason,
+            DisconnectedAt = DisconnectedAt,
+            CurrentBackoffSeconds = CurrentBackoffSeconds,
+            NextHealthProbeAt = NextHealthProbeAt,
+            ZombieDetected = ZombieDetected,
+            RecoveryHint = RecoveryHint,
             UpdatedAt = UpdatedAt,
         };
     }

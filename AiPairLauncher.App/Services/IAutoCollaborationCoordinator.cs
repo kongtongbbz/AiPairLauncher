@@ -20,5 +20,9 @@ public interface IAutoCollaborationCoordinator
 
     Task RejectAsync(string? userNote, CancellationToken cancellationToken = default);
 
+    Task ContinueWaitingAsync(CancellationToken cancellationToken = default);
+
+    Task RetryCurrentStageAsync(CancellationToken cancellationToken = default);
+
     Task StopAsync(CancellationToken cancellationToken = default);
 }

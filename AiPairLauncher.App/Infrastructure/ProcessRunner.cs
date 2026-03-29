@@ -27,8 +27,8 @@ public sealed class ProcessRunner : IProcessRunner
             };
         }
 
-        var timeoutCts = new CancellationTokenSource(command.Timeout);
-        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        using var timeoutCts = new CancellationTokenSource(command.Timeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
         try
         {
@@ -52,8 +52,14 @@ public sealed class ProcessRunner : IProcessRunner
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
-            TryKillProcess(process);
-            throw new TimeoutException($"进程执行超时: {command.FileName}");
+            var killConfirmed = TryKillProcess(process, TimeSpan.FromMilliseconds(500), out var cleanupWarning);
+            var timeoutMessage = $"进程执行超时: {command.FileName}";
+            if (!killConfirmed && !string.IsNullOrWhiteSpace(cleanupWarning))
+            {
+                timeoutMessage = $"{timeoutMessage}；进程清理未完全确认: {cleanupWarning}";
+            }
+
+            throw new TimeoutException(timeoutMessage);
         }
     }
 
@@ -106,18 +112,29 @@ public sealed class ProcessRunner : IProcessRunner
         return startInfo;
     }
 
-    private static void TryKillProcess(Process process)
+    private static bool TryKillProcess(Process process, TimeSpan waitForExit, out string? warning)
     {
+        warning = null;
         try
         {
-            if (!process.HasExited)
+            if (process.HasExited)
             {
-                process.Kill(true);
+                return true;
             }
+
+            process.Kill(entireProcessTree: true);
+            if (!process.WaitForExit((int)waitForExit.TotalMilliseconds))
+            {
+                warning = "Kill 后未在预期时间内退出。";
+                return false;
+            }
+
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
-            // 这里不再抛出，保留超时异常作为主错误
+            warning = ex.Message;
+            return false;
         }
     }
 }

@@ -2,5 +2,7 @@ namespace AiPairLauncher.App.Services;
 
 public interface INotificationService : IDisposable
 {
-    void Notify(string title, string message);
+    event EventHandler<string?>? Activated;
+
+    void Notify(string title, string message, string? activationContext = null);
 }

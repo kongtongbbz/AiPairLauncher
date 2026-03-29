@@ -1,6 +1,7 @@
 <UserControl x:Class="AiPairLauncher.App.Views.Pages.SettingsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:AiPairLauncher.App.Controls">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
             <Border Style="{DynamicResource CardBorderStyle}">
@@ -24,9 +25,9 @@
                                 Content="套用"
                                 Click="ApplyLaunchProfile_Click"
                                 IsEnabled="{Binding Core.CanApplyLaunchProfile}" />
-                        <TextBox Grid.Column="2"
-                                 Width="180"
-                                 Text="{Binding Core.NewLaunchProfileName, UpdateSourceTrigger=PropertyChanged}" />
+                        <controls:SafeTextBox Grid.Column="2"
+                                              Width="180"
+                                              Text="{Binding Core.NewLaunchProfileName, UpdateSourceTrigger=PropertyChanged}" />
                     </Grid>
                     <Button Margin="0,12,0,0"
                             Width="140"

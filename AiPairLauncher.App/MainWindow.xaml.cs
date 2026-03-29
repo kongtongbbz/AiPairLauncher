@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private readonly ISessionMonitorService _sessionMonitorService;
     private readonly ISessionRuntimeRegistry _sessionRuntimeRegistry;
     private readonly IWezTermService _wezTermService;
+    private readonly INotificationService _notificationService;
     private readonly MainWindowViewModel _viewModel;
     private readonly ShellViewModel _shellViewModel;
     private readonly DispatcherTimer _sessionHealthTimer;
@@ -37,6 +38,7 @@ public partial class MainWindow : Window
         ISessionMonitorService sessionMonitorService,
         ISessionRuntimeRegistry sessionRuntimeRegistry,
         IWezTermService wezTermService,
+        INotificationService notificationService,
         IAppThemeService appThemeService,
         ThemeMode initialTheme)
     {
@@ -47,6 +49,7 @@ public partial class MainWindow : Window
         _sessionMonitorService = sessionMonitorService ?? throw new ArgumentNullException(nameof(sessionMonitorService));
         _sessionRuntimeRegistry = sessionRuntimeRegistry ?? throw new ArgumentNullException(nameof(sessionRuntimeRegistry));
         _wezTermService = wezTermService ?? throw new ArgumentNullException(nameof(wezTermService));
+        _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
         _viewModel = new MainWindowViewModel();
         _viewModel.SelectedThemeMode = initialTheme switch
         {
@@ -65,6 +68,7 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
         _sessionHealthTimer.Tick += SessionHealthTimer_Tick;
+        _notificationService.Activated += NotificationService_Activated;
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -109,6 +113,7 @@ public partial class MainWindow : Window
         }
 
         _automationHandlers.Clear();
+        _notificationService.Activated -= NotificationService_Activated;
         _sessionRuntimeRegistry.StopAllAsync().GetAwaiter().GetResult();
     }
 
@@ -341,6 +346,32 @@ public partial class MainWindow : Window
             _viewModel.ApprovalNote = string.Empty;
             await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
         });
+    }
+
+    internal async void ContinueAutomationWait_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("继续等待阶段", async () =>
+        {
+            var coordinator = EnsureCurrentAutomationCoordinator();
+            await coordinator.ContinueWaitingAsync().ConfigureAwait(true);
+
+            _viewModel.AppendLog("已继续等待当前超时阶段。");
+            _viewModel.FooterMessage = "最近操作: 已继续等待当前阶段";
+            await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
+        });
+    }
+
+    internal async void RetryAutomationStage_Click(object sender, RoutedEventArgs e)
+    {
+        await ExecuteActionAsync("重试当前阶段", async () =>
+        {
+            var coordinator = EnsureCurrentAutomationCoordinator();
+            await coordinator.RetryCurrentStageAsync().ConfigureAwait(true);
+
+            _viewModel.AppendLog("已重新发送当前超时阶段的自动编排指令。");
+            _viewModel.FooterMessage = "最近操作: 已重试当前阶段";
+            await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
+        }, showMessageBoxOnFailure: true);
     }
 
     internal async void SendLeftToRight_Click(object sender, RoutedEventArgs e)
@@ -1347,8 +1378,65 @@ public partial class MainWindow : Window
                 ? $"自动编排: {state.StatusDetail}"
                 : $"自动编排暂停: {state.LastError}";
 
+            MaybeNotifyAutomationState(sessionId, state);
+
             await RefreshSessionHealthAsync(writeLog: false).ConfigureAwait(true);
         });
+    }
+
+    private void NotificationService_Activated(object? sender, string? activationContext)
+    {
+        if (string.IsNullOrWhiteSpace(activationContext) ||
+            !activationContext.StartsWith("automation:", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var sessionId = activationContext["automation:".Length..];
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            await OpenAutomationPanelAsync(sessionId).ConfigureAwait(true);
+        });
+    }
+
+    private void MaybeNotifyAutomationState(string sessionId, AutomationRunState state)
+    {
+        if (state.Status != AutomationStageStatus.PendingUserApproval || state.PendingApproval is null)
+        {
+            return;
+        }
+
+        var isCurrentAutomationPanel =
+            string.Equals(_shellViewModel.CurrentPageKey, NavigationPageKeys.Automation, StringComparison.Ordinal) &&
+            string.Equals(_viewModel.SelectedSessionRecord?.SessionId, sessionId, StringComparison.Ordinal);
+        if (isCurrentAutomationPanel)
+        {
+            return;
+        }
+
+        var sessionName = _viewModel.FindSessionById(sessionId)?.DisplayName ?? sessionId;
+        var body = state.PendingApproval.InterventionKind == AutomationInterventionKind.Timeout
+            ? $"{sessionName}: {state.PendingApproval.Title}，可继续等待、重试本阶段或终止编排。"
+            : $"{sessionName}: {state.PendingApproval.Title}";
+
+        _notificationService.Notify(
+            "AiPair 自动编排等待处理",
+            body,
+            $"automation:{sessionId}");
+    }
+
+    private async Task OpenAutomationPanelAsync(string sessionId)
+    {
+        await LoadSessionCatalogAsync(sessionId, writeLog: false).ConfigureAwait(true);
+        _shellViewModel.Navigate(NavigationPageKeys.Automation, sessionId);
+        await RestoreAutomationSnapshotIfPossibleAsync(_viewModel.SelectedSessionRecord?.Session).ConfigureAwait(true);
+        await LoadAutomationHistoryAsync(_viewModel.SelectedSessionRecord?.SessionId).ConfigureAwait(true);
+        await LoadTaskMdRevisionHistoryAsync(_viewModel.SelectedSessionRecord?.SessionId).ConfigureAwait(true);
     }
 
     private async Task LoadAutomationHistoryAsync(string? sessionId)

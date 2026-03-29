@@ -260,6 +260,24 @@ public sealed class WezTermServiceTests : IDisposable
         Assert.Contains(runner.Commands, command => command.Arguments.Contains("activate-pane") && command.Arguments.Contains("77"));
     }
 
+    [Fact(DisplayName = "test_read_pane_text_throws_permission_denied_exception")]
+    public async Task ReadPaneTextThrowsPermissionDeniedExceptionAsync()
+    {
+        var runner = new FakeProcessRunner((_) => Task.FromResult(new ProcessResult
+        {
+            ExitCode = 1,
+            StandardOutput = string.Empty,
+            StandardError = "Access is denied.",
+        }));
+        var service = new WezTermService(new CommandLocator(), runner);
+        var session = AutomationTestHelpers.CreateSession();
+
+        var exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => service.ReadPaneTextAsync(session, session.LeftPaneId, 20));
+
+        Assert.Contains("Access is denied", exception.Message);
+    }
+
     [Fact(DisplayName = "test_create_worktree_launch_context_uses_subdirectory_strategy")]
     public async Task CreateWorktreeLaunchContextUsesSubdirectoryStrategyAsync()
     {

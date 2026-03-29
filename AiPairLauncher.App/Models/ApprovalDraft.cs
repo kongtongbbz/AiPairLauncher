@@ -2,6 +2,8 @@ namespace AiPairLauncher.App.Models;
 
 public sealed class ApprovalDraft
 {
+    public AutomationInterventionKind InterventionKind { get; init; } = AutomationInterventionKind.Approval;
+
     public AutomationPhase Phase { get; init; } = AutomationPhase.None;
 
     public int StageId { get; init; }
@@ -22,6 +24,12 @@ public sealed class ApprovalDraft
 
     public TaskMdStatus TaskMdStatus { get; init; } = TaskMdStatus.Unknown;
 
+    public AutomationPhase? ResumePhase { get; init; }
+
+    public AutomationStageStatus? ResumeStatus { get; init; }
+
+    public string ResumeStatusDetail { get; init; } = string.Empty;
+
     public string Title { get; init; } = string.Empty;
 
     public string Summary { get; init; } = string.Empty;
@@ -35,6 +43,8 @@ public sealed class ApprovalDraft
     public IReadOnlyList<string> TaskProgress { get; init; } = [];
 
     public string ExecutorBrief { get; init; } = string.Empty;
+
+    public string? SourcePacketRaw { get; init; }
 
     public string CodexBrief => ExecutorBrief;
 }

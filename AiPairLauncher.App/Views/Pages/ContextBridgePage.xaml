@@ -1,6 +1,7 @@
 <UserControl x:Class="AiPairLauncher.App.Views.Pages.ContextBridgePage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:AiPairLauncher.App.Controls">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -37,19 +38,19 @@
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <TextBox MinHeight="320"
-                         AcceptsReturn="True"
-                         TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto"
-                         Text="{Binding Core.TransferInstruction, UpdateSourceTrigger=PropertyChanged}" />
+                <controls:SafeTextBox MinHeight="320"
+                                      AcceptsReturn="True"
+                                      TextWrapping="Wrap"
+                                      VerticalScrollBarVisibility="Auto"
+                                      Text="{Binding Core.TransferInstruction, UpdateSourceTrigger=PropertyChanged}" />
 
                 <UniformGrid Grid.Row="1"
                              Margin="0,12,0,0"
                              Columns="2">
                     <StackPanel Margin="0,0,10,0">
                         <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Text="抓取行数" />
-                        <TextBox Margin="0,6,0,0"
-                                 Text="{Binding Core.LastLines, UpdateSourceTrigger=PropertyChanged}" />
+                        <controls:SafeTextBox Margin="0,6,0,0"
+                                              Text="{Binding Core.LastLines, UpdateSourceTrigger=PropertyChanged}" />
                         <CheckBox Margin="0,12,0,0"
                                   IsChecked="{Binding Core.SubmitAfterSend}"
                                   Content="发送后自动回车" />
