@@ -10,7 +10,6 @@ public partial class SessionDetailPage : System.Windows.Controls.UserControl
     public SessionDetailPage()
     {
         InitializeComponent();
-        Loaded += OnLoaded;
     }
 
     private void ReloadLastSession_Click(object sender, RoutedEventArgs e) => ResolveHost()?.ReloadLastSession_Click(sender, e);
@@ -38,20 +37,4 @@ public partial class SessionDetailPage : System.Windows.Controls.UserControl
         return Window.GetWindow(this) as MainWindow;
     }
 
-    private void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        Dispatcher.BeginInvoke(
-            DispatcherPriority.Input,
-            new Action(() =>
-            {
-                if (ReloadSessionButton.IsVisible && ReloadSessionButton.IsEnabled)
-                {
-                    Keyboard.Focus(ReloadSessionButton);
-                }
-                else
-                {
-                    Keyboard.ClearFocus();
-                }
-            }));
-    }
 }

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Windows;
 using AiPairLauncher.App.Infrastructure;
 using AiPairLauncher.App.Services;
@@ -13,6 +14,10 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        DispatcherUnhandledException += App_DispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+        TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
 
         try
         {
@@ -62,5 +67,59 @@ public partial class App : System.Windows.Application
     {
         _notificationService?.Dispose();
         base.OnExit(e);
+    }
+
+    private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+    {
+        WriteCrashLog("DispatcherUnhandledException", e.Exception);
+        System.Windows.MessageBox.Show(
+            $"应用发生未处理异常，详情已写入日志。\n\n{e.Exception.Message}",
+            "AiPairLauncher",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+        e.Handled = true;
+        Shutdown(-1);
+    }
+
+    private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        WriteCrashLog("AppDomainUnhandledException", e.ExceptionObject as Exception);
+    }
+
+    private void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        WriteCrashLog("TaskSchedulerUnobservedTaskException", e.Exception);
+        e.SetObserved();
+    }
+
+    private static void WriteCrashLog(string source, Exception? exception)
+    {
+        try
+        {
+            var root = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AiPairLauncher",
+                "logs");
+            Directory.CreateDirectory(root);
+
+            var filePath = Path.Combine(root, $"crash-{DateTime.Now:yyyyMMdd-HHmmss-fff}.log");
+            var builder = new StringBuilder();
+            builder.AppendLine($"Source: {source}");
+            builder.AppendLine($"Time: {DateTime.Now:O}");
+            if (exception is not null)
+            {
+                builder.AppendLine(exception.ToString());
+            }
+            else
+            {
+                builder.AppendLine("Exception: <null>");
+            }
+
+            File.WriteAllText(filePath, builder.ToString(), Encoding.UTF8);
+        }
+        catch
+        {
+            // 崩溃日志写入失败时不再二次抛错，避免覆盖原始异常。
+        }
     }
 }
